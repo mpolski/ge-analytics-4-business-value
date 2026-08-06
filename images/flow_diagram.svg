@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 740" width="100%" height="100%">
+  <defs>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a73e8"/>
+      <stop offset="100%" stop-color="#4285f4"/>
+    </linearGradient>
+    <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d652d"/>
+      <stop offset="100%" stop-color="#34a853"/>
+    </linearGradient>
+    <linearGradient id="darkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#202124"/>
+      <stop offset="100%" stop-color="#2d3035"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    <marker id="arrowBlue" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="#4285f4"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="#34a853"/>
+    </marker>
+    <marker id="arrowYellow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="#fbbc04"/>
+    </marker>
+    <marker id="arrowPurple" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="#c58af9"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="#9aa0a6"/>
+    </marker>
+  </defs>
+
+  <style>
+    .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 20px; font-weight: 700; fill: #ffffff; }
+    .subtitle { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; fill: #9aa0a6; }
+    .node-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; font-weight: 600; fill: #ffffff; }
+    .node-desc { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; fill: #bdc1c6; }
+    .badge { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 10px; font-weight: 700; }
+  </style>
+
+  <!-- Background -->
+  <rect width="1100" height="740" rx="16" fill="#18191c"/>
+
+  <!-- Header -->
+  <text x="40" y="45" class="title">Gemini Enterprise Usage Analytics - End-to-End Data Pipeline</text>
+  <text x="40" y="68" class="subtitle">Real-time telemetry capture from user interactions to BigQuery views &amp; No-Code Agent</text>
+
+  <!-- STAGE 1: User Interactions -->
+  <g transform="translate(40, 95)">
+    <!-- Case 1 Card -->
+    <rect width="210" height="100" rx="10" fill="url(#darkGrad)" stroke="#4285f4" stroke-width="2" filter="url(#shadow)"/>
+    <rect x="12" y="12" width="70" height="18" rx="4" fill="#1a73e8"/>
+    <text x="47" y="25" text-anchor="middle" fill="#ffffff" class="badge">CASE 1</text>
+    <text x="14" y="48" class="node-title">Chat Interaction</text>
+    <text x="14" y="66" class="node-desc">User queries central</text>
+    <text x="14" y="81" class="node-desc">Gemini Enterprise Chat (default)</text>
+
+    <!-- Case 2 Card -->
+    <g transform="translate(0, 130)">
+      <rect width="210" height="100" rx="10" fill="url(#darkGrad)" stroke="#34a853" stroke-width="2" filter="url(#shadow)"/>
+      <rect x="12" y="12" width="70" height="18" rx="4" fill="#0d652d"/>
+      <text x="47" y="25" text-anchor="middle" fill="#ffffff" class="badge">CASE 2</text>
+      <text x="14" y="48" class="node-title">Custom Agent Interaction</text>
+      <text x="14" y="66" class="node-desc">User interacts with</text>
+      <text x="14" y="81" class="node-desc">HR Agent / No-Code Agent</text>
+    </g>
+  </g>
+
+  <!-- STAGE 2: API Layer -->
+  <g transform="translate(300, 95)">
+    <!-- Case 1 API -->
+    <rect width="230" height="100" rx="10" fill="url(#darkGrad)" stroke="#3c4043" stroke-width="1" filter="url(#shadow)"/>
+    <text x="14" y="26" class="node-title">AssistantService.StreamAssist</text>
+    <text x="14" y="48" class="node-desc">• target: default_assistant</text>
+    <text x="14" y="66" class="node-desc">• agentsSpec: NULL</text>
+    <text x="14" y="84" class="node-desc">Emits audit log with is_chat=true</text>
+
+    <!-- Case 2 API -->
+    <g transform="translate(0, 130)">
+      <rect width="230" height="100" rx="10" fill="url(#darkGrad)" stroke="#3c4043" stroke-width="1" filter="url(#shadow)"/>
+      <text x="14" y="26" class="node-title">AssistantService.StreamAssist</text>
+      <text x="14" y="48" class="node-desc">• agentsSpec.agentId: '111727...'</text>
+      <text x="14" y="66" class="node-desc">• agentInfo.displayName: 'HR Agent'</text>
+      <text x="14" y="84" class="node-desc">Emits log with agentId &amp; name</text>
+    </g>
+  </g>
+
+  <!-- STAGE 3: Cloud Logging Sink -->
+  <g transform="translate(580, 145)">
+    <rect width="230" height="100" rx="10" fill="url(#darkGrad)" stroke="#fbbc04" stroke-width="2" filter="url(#shadow)"/>
+    <text x="14" y="28" class="node-title">Cloud Logging Sink</text>
+    <text x="14" y="48" class="node-desc" fill="#fbbc04" font-weight="600">gemini_usage_activity_sink</text>
+    <text x="14" y="66" class="node-desc">• Real-time streaming (&lt;30s)</text>
+    <text x="14" y="84" class="node-desc">• Filters Discovery Engine logs</text>
+  </g>
+
+  <!-- Connecting Lines Top (Clean Horizontal & Angled) -->
+  <path d="M 250 145 L 300 145" stroke="#4285f4" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <path d="M 250 275 L 300 275" stroke="#34a853" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <path d="M 530 145 L 580 180" stroke="#4285f4" stroke-width="2" fill="none" marker-end="url(#arrowBlue)"/>
+  <path d="M 530 275 L 580 210" stroke="#34a853" stroke-width="2" fill="none" marker-end="url(#arrowGreen)"/>
+
+  <!-- Divider to BigQuery Layer -->
+  <line x1="40" y1="345" x2="1060" y2="345" stroke="#3c4043" stroke-dasharray="4 4"/>
+  <text x="40" y="365" class="title" fill="#8ab4f8" font-size="14px">BIGQUERY ANALYTICS LAYER (Dataset: gemini_analytics)</text>
+
+  <!-- STAGE 4: BigQuery Raw Storage Tables -->
+  <g transform="translate(40, 385)">
+    <rect width="300" height="145" rx="10" fill="url(#darkGrad)" stroke="#5f6368" stroke-width="1" filter="url(#shadow)"/>
+    <text x="16" y="26" class="node-title">Raw Ingested Storage Tables</text>
+    <text x="16" y="48" class="node-desc" fill="#8ab4f8">1. cloudaudit_googleapis_com_data_access</text>
+    <text x="26" y="64" class="node-desc">• protopayload_auditlog records</text>
+    <text x="16" y="84" class="node-desc" fill="#8ab4f8">2. discoveryengine_..._user_activity</text>
+    <text x="26" y="100" class="node-desc">• jsonPayload real-time user events</text>
+    <text x="16" y="120" class="node-desc" fill="#8ab4f8">3. agent_names (Auto-harvested mappings)</text>
+  </g>
+
+  <!-- Clean, Non-Overlapping Path from Sink to Storage Tables -->
+  <!-- Starts at bottom-center of Sink (695, 245), goes straight down through open space to y=330, turns left across open corridor to x=190, then drops straight down into top of Storage Tables at (190, 385) -->
+  <path d="M 695 245 L 695 330 L 190 330 L 190 385" stroke="#fbbc04" stroke-width="2" fill="none" marker-end="url(#arrowYellow)"/>
+
+  <!-- STAGE 5: Views -->
+  <g transform="translate(380, 385)">
+    <!-- View 1 -->
+    <rect width="320" height="145" rx="10" fill="url(#darkGrad)" stroke="#4285f4" stroke-width="2" filter="url(#shadow)"/>
+    <text x="16" y="26" class="node-title" fill="#8ab4f8">vw_user_feature_adoption</text>
+    <text x="16" y="48" class="node-desc">• user_email: user@domain.com</text>
+    <text x="16" y="66" class="node-desc">• activity_date: 2026-08-06</text>
+    <text x="16" y="84" class="node-desc">• used_chat: TRUE | used_agents: TRUE</text>
+    <text x="16" y="102" class="node-desc">• used_notebooklm: FALSE</text>
+    <text x="16" y="120" class="node-desc">• agent_ids_used: ['1117275266155...']</text>
+  </g>
+
+  <g transform="translate(740, 385)">
+    <!-- Master View -->
+    <rect width="320" height="145" rx="10" fill="url(#darkGrad)" stroke="#34a853" stroke-width="2" filter="url(#shadow)"/>
+    <text x="16" y="26" class="node-title" fill="#81c995">vw_feature_adoption_summary</text>
+    <text x="16" y="48" class="node-desc" font-weight="600">MASTER SYSTEM ADOPTION VIEW</text>
+    <text x="16" y="68" class="node-desc">• total_active_users, distinct_agents_used</text>
+    <text x="16" y="86" class="node-desc">• chat_pct, notebooklm_pct, agent_pct</text>
+    <text x="16" y="104" class="node-desc">• chat_and_notebooklm_pct, chat_and_agents_pct</text>
+    <text x="16" y="122" class="node-desc">• notebooklm_and_agents_pct, all_three_pct</text>
+  </g>
+
+  <!-- Connect Tables to Views (Clean Horizontal Line) -->
+  <path d="M 340 457 L 380 457" stroke="#9aa0a6" stroke-width="2" marker-end="url(#arrowGray)"/>
+  <path d="M 700 457 L 740 457" stroke="#9aa0a6" stroke-width="2" marker-end="url(#arrowGray)"/>
+
+  <!-- STAGE 6: Consumer Layer -->
+  <g transform="translate(380, 565)">
+    <rect width="680" height="110" rx="10" fill="url(#darkGrad)" stroke="#a142f4" stroke-width="2" filter="url(#shadow)"/>
+    <text x="20" y="32" class="node-title" fill="#c58af9" font-size="15px">🤖 No-Code Analytics Agent (Gemini Enterprise Agent Designer)</text>
+    <text x="20" y="56" class="node-desc" font-size="12px">Answers natural language user questions using BigQuery tools:</text>
+    <text x="20" y="74" class="node-desc" fill="#e8eaed">• "What % of users use Chat &amp; Agents?" ➔ Queries vw_feature_adoption_summary</text>
+    <text x="20" y="92" class="node-desc" fill="#e8eaed">• "List all users and their interactions" ➔ Queries vw_user_feature_adoption</text>
+  </g>
+
+  <!-- Connect Views to Consumer (Clean Vertical Lines) -->
+  <path d="M 540 530 L 540 565" stroke="#c58af9" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <path d="M 900 530 L 900 565" stroke="#c58af9" stroke-width="2" marker-end="url(#arrowPurple)"/>
+</svg>

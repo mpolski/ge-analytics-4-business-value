@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/
+venv/
+VENV/
+env/
+ENV/
+
+# Environment files
+.env
+*.env
+!.env_template
+
+# Data dumps, raw exports & generated prompts
+*.jsonl
+agents.json
+raw_*.json
+raw_logs.json
+raw_user_activity_logs.json
+raw_agent_creation_logs.json
+historical_user_activity.jsonl
+historical_creators.jsonl
+*.log
+agent_designer/prompt.md
+prompt.md
+todo.txt
+
+# Cache directories
+.pytest_cache/
+.ruff_cache/
+
+# IDE & OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
