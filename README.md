@@ -44,7 +44,7 @@ graph LR
 
 ## 🏛️ Analytical Data Architecture
 
-The pipeline exports and merges disparate telemetry streams into structured tables and enriched analytical views in BigQuery (Dataset: `ge_metrics`):
+The pipeline exports and merges disparate telemetry streams into structured tables and enriched analytical views in BigQuery (Dataset: `ge_metrics`). For detailed schema definitions and field-by-field breakdowns, see [Detailed End-to-End Data Flow](flow.md):
 
 ![Gemini Enterprise Usage Analytics End-to-End Data Pipeline](images/flow_diagram.png)
 
