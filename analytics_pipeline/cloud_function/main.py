@@ -134,10 +134,29 @@ def reconcile_audit_log_names(project_id, dataset_id):
     except Exception as e:
         print(f"ℹ️ Reconcile skipped or table empty: {e}")
 
-def trigger_metrics_export(project_id, location, engine_id, dataset_id):
-    """Step 3: Trigger Discovery Engine exportMetrics API into agent_session_metrics."""
+def trigger_metrics_export(project_id, location, engine_input, dataset_id):
+    """Step 3: Trigger Discovery Engine exportMetrics API across single, array, or auto-discovered engines."""
     token = get_auth_token()
-    url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{engine_id}/analytics:exportMetrics"
+    target_engines = []
+    
+    if engine_input and engine_input.upper() not in ["ALL", "AUTO", "*"]:
+        target_engines = [e.strip() for e in engine_input.split(",") if e.strip()]
+    else:
+        # Auto-discover all engines in project
+        list_url = f"https://discoveryengine.googleapis.com/v1/projects/{project_id}/locations/{location}/collections/default_collection/engines"
+        headers = {'Authorization': f'Bearer {token}', 'x-goog-user-project': project_id}
+        try:
+            res = requests.get(list_url, headers=headers, timeout=(10, 20))
+            if res.status_code == 200:
+                engines_list = res.json().get("engines", [])
+                target_engines = [e.get("name", "").split("/")[-1] for e in engines_list if e.get("name")]
+        except Exception as e:
+            print(f"⚠️ Auto-discovery error: {e}")
+            
+    if not target_engines:
+        target_engines = [engine_input] if engine_input else []
+        
+    operations = []
     headers = {
         'Authorization': f'Bearer {token}',
         'Content-Type': 'application/json',
@@ -151,34 +170,41 @@ def trigger_metrics_export(project_id, location, engine_id, dataset_id):
             }
         }
     }
-    res = requests.post(url, headers=headers, json=payload)
-    if res.status_code == 200:
-        operation_name = res.json().get('name')
-        print(f"✅ Triggered exportMetrics. Operation: {operation_name}")
-        return True, operation_name
-    else:
-        print(f"❌ Failed to trigger exportMetrics: {res.status_code} - {res.text}")
-        return False, res.text
+    
+    for engine_id in target_engines:
+        url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{engine_id}/analytics:exportMetrics"
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=(10, 20))
+            if res.status_code == 200:
+                op_name = res.json().get('name')
+                operations.append(f"{engine_id}: {op_name}")
+                print(f"✅ Triggered export for '{engine_id}'. Op: {op_name}")
+            else:
+                print(f"⚠️ Export skipped/failed for '{engine_id}': {res.status_code}")
+        except Exception as e:
+            print(f"⚠️ Export error for '{engine_id}': {e}")
+            
+    return (len(operations) > 0), ", ".join(operations)
 
 @functions_framework.http
 def sync_metrics(request):
     """HTTP Cloud Function Entrypoint for Cloud Scheduler or manual trigger."""
     project_id = os.getenv("PROJECT_ID", "genai-ge-app")
-    engine_id = os.getenv("ENGINE_ID", "ge-app-global-1_1780344440285")
+    engine_input = os.getenv("ENGINE_ID", "ALL")
     dataset_id = os.getenv("DATASET_ID", "ge_metrics")
     location = os.getenv("GE_LOCATION", "global")
     
     print(f"🚀 Starting Nightly Analytics Sync for Project: {project_id}, Dataset: {dataset_id}")
     
     try:
-        # Step 1: Live agent metadata
-        agent_count = fetch_and_sync_agent_names(project_id, location, engine_id, dataset_id)
+        # Step 1: Live agent metadata across all engines
+        agent_count = fetch_and_sync_agent_names(project_id, location, engine_input, dataset_id)
         
         # Step 2: Audit log name reconciliation
         reconcile_audit_log_names(project_id, dataset_id)
         
-        # Step 3: Discovery Engine session metrics export
-        export_ok, op_detail = trigger_metrics_export(project_id, location, engine_id, dataset_id)
+        # Step 3: Discovery Engine session metrics export across all target engines
+        export_ok, op_detail = trigger_metrics_export(project_id, location, engine_input, dataset_id)
         
         response_data = {
             "status": "success",
@@ -186,7 +212,7 @@ def sync_metrics(request):
             "dataset_id": dataset_id,
             "agents_synced": agent_count,
             "export_triggered": export_ok,
-            "operation": op_detail
+            "operations": op_detail
         }
         return (json.dumps(response_data), 200, {'Content-Type': 'application/json'})
     except Exception as e:

@@ -12,59 +12,39 @@ def export_metrics():
     # 1. Load the variables from the .env file
     load_dotenv()
     
-    project_id = os.getenv("PROJECT_ID")
-    location = os.getenv("GE_LOCATION") or os.getenv("LOCATION", "global")
-    engine_id = os.getenv("ENGINE_ID")
-    dataset_id = os.getenv("DATASET_ID")
-    table_id = "agent_session_metrics"
+    # 1. Parse target engines (supports comma-separated list or auto-discovery)
+    engine_input = os.getenv("ENGINE_ID", "").strip()
+    target_engines = []
     
-    # Safety check
-    if not project_id:
-        print("❌ Error: PROJECT_ID is not set. Please define PROJECT_ID in .env file.")
-        sys.exit(1)
-    if not engine_id:
-        print("❌ Error: ENGINE_ID is not set. Please define ENGINE_ID in .env file.")
-        sys.exit(1)
-    if not dataset_id:
-        print("❌ Error: DATASET_ID is not set. Please define DATASET_ID in .env file.")
-        sys.exit(1)
-        
-    print(f"🚀 Triggering export for Engine: {engine_id}")
-    print(f"📁 Destination: {project_id}.{dataset_id}.{table_id}")
-
-    # 2. Authenticate using your active gcloud session or ADC
-    token = None
-    try:
-        token = subprocess.check_output(
-            ["gcloud", "auth", "print-access-token"], 
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
-    except Exception:
-        pass
-        
-    if not token:
+    if engine_input and engine_input.upper() not in ["ALL", "AUTO", "*"]:
+        # Comma-separated list or single ID (e.g., "engine-1,engine-2")
+        target_engines = [e.strip() for e in engine_input.split(",") if e.strip()]
+    else:
+        # Auto-discover all engines in project/location
+        print(f"🔍 Auto-discovering all engines in project '{project_id}'...")
+        list_url = f"https://discoveryengine.googleapis.com/v1/projects/{project_id}/locations/{location}/collections/default_collection/engines"
+        auth_headers = {'Authorization': f'Bearer {token}', 'x-goog-user-project': project_id}
         try:
-            credentials, _ = google.auth.default(
-                scopes=['https://www.googleapis.com/auth/cloud-platform']
-            )
-            auth_req = google.auth.transport.requests.Request()
-            credentials.refresh(auth_req)
-            token = credentials.token
+            l_res = requests.get(list_url, headers=auth_headers, timeout=(10, 20))
+            if l_res.status_code == 200:
+                engines_list = l_res.json().get("engines", [])
+                target_engines = [e.get("name", "").split("/")[-1] for e in engines_list if e.get("name")]
         except Exception as e:
-            print(f"❌ Auth failed. Run 'gcloud auth application-default login' first.\nError: {e}")
-            sys.exit(1)
+            print(f"⚠️ Auto-discovery failed: {e}")
+            
+    if not target_engines:
+        print("❌ Error: No engines found to export. Set ENGINE_ID in .env (e.g. ENGINE_ID=engine-1,engine-2).")
+        sys.exit(1)
+        
+    print(f"🚀 Triggering metrics export across {len(target_engines)} engine(s): {', '.join(target_engines)}")
+    print(f"📁 Destination Table: {project_id}.{dataset_id}.{table_id}")
 
-    # 3. Build the API Request
-    url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{engine_id}/analytics:exportMetrics"
-    
+    # 2. Iterate through each engine and trigger exportMetrics
     headers = {
         'Authorization': f'Bearer {token}',
         'Content-Type': 'application/json',
         'x-goog-user-project': project_id
     }
-    
-    # Note: Cross-project export is NOT supported by the discoveryengine API payload.
-    # The datasetId must be in the same project as the Engine.
     payload = {
         "outputConfig": {
             "bigqueryDestination": {
@@ -73,8 +53,17 @@ def export_metrics():
             }
         }
     }
-    # 4. Fire the Request
-    response = requests.post(url, headers=headers, data=json.dumps(payload))
+    
+    for idx, engine_id in enumerate(target_engines, 1):
+        print(f"\n📦 [{idx}/{len(target_engines)}] Triggering export for Engine: '{engine_id}'...")
+        url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{engine_id}/analytics:exportMetrics"
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=(10, 30))
+        
+        if response.status_code == 200:
+            operation_name = response.json().get('name')
+            print(f"  ✅ Triggered successfully! Operation: {operation_name}")
+        else:
+            print(f"  ⚠️ Warning: Export failed for {engine_id}: {response.status_code} - {response.text}")
     
     if response.status_code == 200:
         operation_name = response.json().get('name')
