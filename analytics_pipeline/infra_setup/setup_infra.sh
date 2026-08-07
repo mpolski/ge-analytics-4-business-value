@@ -108,6 +108,14 @@ CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googlea
   severity STRING,
   jsonPayload JSON
 );
+
+CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_notebooklm_enterprise_user_activity\` (
+  timestamp TIMESTAMP,
+  logName STRING,
+  insertId STRING,
+  severity STRING,
+  jsonPayload JSON
+);
 "
 echo "✅ Base tables initialized."
 
