@@ -211,6 +211,7 @@ stage_backfill_creators() {
       timestamp: .timestamp,
       creator_email: (.protoPayload.authenticationInfo.principalEmail // (.protoPayload.authenticationInfo.principalSubject | sub("^user:"; "") | split("/") | last) // "unknown_email"),
       agent_id: (((.protoPayload.request.agent.name // .protoPayload.response.name // .protoPayload.resourceName // "unknown/unknown_id") | split("/") | last) | tostring),
+      engine_id: (((.protoPayload.request.agent.name // .protoPayload.response.name // .protoPayload.resourceName // "") | split("/engines/") | last | split("/") | first) // "default_engine"),
       display_name: (.protoPayload.request.agent.displayName // .protoPayload.response.displayName // "Unknown Name")
     }' > "${output_file}"
 
@@ -220,7 +221,7 @@ stage_backfill_creators() {
     bq load \
       --project_id="${PROJECT_ID}" \
       --source_format=NEWLINE_DELIMITED_JSON \
-      --schema="timestamp:TIMESTAMP,creator_email:STRING,agent_id:STRING,display_name:STRING" \
+      --schema="timestamp:TIMESTAMP,creator_email:STRING,agent_id:STRING,engine_id:STRING,display_name:STRING" \
       --replace \
       "${PROJECT_ID}:${DATASET_ID}.historical_creators" \
       "${output_file}"

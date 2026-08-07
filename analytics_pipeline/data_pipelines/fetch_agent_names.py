@@ -133,9 +133,12 @@ def process_single_agent(session, headers, agt, engine_name, PROJECT_ID, LOCATIO
         # Fallback to list metadata if detail fetch fails
         pass
 
+    engine_id_clean = engine_name.split("/")[-1] if engine_name else "default_engine"
+
     return {
         "agent_id": str(agent_id),
         "display_name": display_name,
+        "engine_id": str(engine_id_clean),
         "description": description_string,
         "system_instructions": system_instructions_string,
         "datastore_ids": datastore_ids_str,

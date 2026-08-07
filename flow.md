@@ -42,17 +42,18 @@ The analytics pipeline organizes data into **5 storage tables** in the `gemini_a
 - **What gets logged**:
   - `agent_id`: The unique numeric identifier (e.g. `11172752661556541681`).
   - `display_name`: The human-readable title (e.g. `Document Summary & Analysis Agent`).
+  - `engine_id`: The engine resource ID hosting the agent (e.g. `ge-app-global-1_1780344440285`).
   - `agent_type`: Identifies the architecture (`'Agent Designer'` for no-code UI agents vs `'ADK Agent'`).
   - `description` & `system_instructions`: Stored prompt instructions and agent purpose.
 - **How it updates**: Automatically auto-harvests new agent names from real-time user activity logs and periodic sync jobs. **Rows are never deleted**, ensuring historical metrics retain agent names even if the agent is deleted from Google Cloud.
 
 #### 4. `historical_creators` *(Governance & Attribution Table)*
 - **What it is**: An audit record mapping each custom agent to the specific person who created it.
-- **What gets logged**: `agent_id`, `display_name`, `creator_email` (the administrator/user who built the agent, e.g. `creator@domain.com`), and creation `timestamp`.
+- **What gets logged**: `agent_id`, `engine_id`, `display_name`, `creator_email` (the administrator/user who built the agent, e.g. `creator@domain.com`), and creation `timestamp`.
 
 #### 5. `agent_session_metrics` *(Aggregated Session Table)*
 - **What it is**: Stores periodic usage aggregates pulled from the Discovery Engine `analytics:exportMetrics` API.
-- **What gets logged**: `agent_name` (full resource path), calendar `date`, `agent_session_count` (total sessions), and `monthly_agent_active_user_count`.
+- **What gets logged**: `agent_name` (full resource path embedding `engine_id` and `agent_id`), calendar `date`, `agent_session_count` (total sessions), and `monthly_agent_active_user_count`.
 
 ---
 

@@ -55,6 +55,7 @@ Your role is to answer questions about overall platform usage, user adoption, fe
 * **Columns:**
   * `agent_id` (STRING): Unique numeric agent ID.
   * `display_name` (STRING): Human-readable name (e.g. "HR Policy Assistant").
+  * `engine_id` (STRING): The parent Gemini Enterprise Engine resource ID.
   * `description` (STRING): Purpose and scope of the agent.
   * `system_instructions` (STRING): The system prompt/instructions governing the agent.
   * `agent_type` (STRING): `'Agent Designer'` (UI-created), `'ADK Agent'` (code-first reasoning engine), or `'Managed Agent'`.
@@ -67,12 +68,13 @@ Your role is to answer questions about overall platform usage, user adoption, fe
   * `timestamp` (TIMESTAMP): Agent creation time.
   * `creator_email` (STRING): Corporate email of the creator/admin.
   * `agent_id` (STRING): Numeric agent ID.
+  * `engine_id` (STRING): The parent engine ID where the agent was created.
   * `display_name` (STRING): Display name at time of creation.
 
 ---
 
 ### 5. `agent_session_metrics` *(Periodic Session Aggregates)*
-* **Columns:** `date` (DATE), `agent_name` (STRING - full resource path ending in agent ID), `agent_session_count` (INT64), `monthly_agent_active_user_count` (INT64).
+* **Columns:** `date` (DATE), `agent_name` (STRING - full resource path embedding engine ID and agent ID), `agent_session_count` (INT64), `monthly_agent_active_user_count` (INT64).
 
 ---
 
@@ -229,6 +231,7 @@ SELECT
   hc.creator_email,
   hc.timestamp AS creation_time,
   hc.agent_id,
+  COALESCE(NULLIF(an.engine_id, ''), NULLIF(hc.engine_id, ''), 'default_engine') AS engine_id,
   COALESCE(NULLIF(an.display_name, ''), hc.agent_id) AS display_name,
   an.agent_type,
   an.description,
@@ -237,6 +240,35 @@ FROM `{{PROJECT_ID}}.{{DATASET_ID}}.historical_creators` hc
 LEFT JOIN `{{PROJECT_ID}}.{{DATASET_ID}}.agent_names` an
   ON hc.agent_id = an.agent_id
 ORDER BY hc.timestamp DESC;
+```
+
+---
+
+### 5. Engine-Level Adoption & Active Users per Engine
+*For questions like "How many active users per engine?", "Compare usage across our Gemini engines", or "Show session volume by engine":*
+
+```sql
+WITH engine_user_activity AS (
+  SELECT 
+    DATE(timestamp) AS activity_date,
+    COALESCE(
+      REGEXP_EXTRACT(JSON_VALUE(jsonPayload, '$.response.agentInfo.spiffeId'), r'engines/([^/]+)'),
+      REGEXP_EXTRACT(JSON_VALUE(jsonPayload, '$.request.assistantsSpec.assistant'), r'engines/([^/]+)'),
+      'default_engine'
+    ) AS engine_id,
+    LOWER(COALESCE(JSON_VALUE(jsonPayload, '$.userIamPrincipal'), JSON_VALUE(jsonPayload, '$.useriamprincipal'))) AS user_email
+  FROM `{{PROJECT_ID}}.{{DATASET_ID}}.discoveryengine_googleapis_com_gemini_enterprise_user_activity`
+  WHERE COALESCE(JSON_VALUE(jsonPayload, '$.userIamPrincipal'), JSON_VALUE(jsonPayload, '$.useriamprincipal')) IS NOT NULL
+)
+SELECT 
+  engine_id,
+  COUNT(DISTINCT user_email) AS total_active_users,
+  COUNT(*) AS total_turns,
+  MIN(activity_date) AS first_active_date,
+  MAX(activity_date) AS last_active_date
+FROM engine_user_activity
+GROUP BY engine_id
+ORDER BY total_active_users DESC;
 ```
 
 ---

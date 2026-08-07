@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.${TABLE_ID}\` (
 CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.agent_names\` (
   agent_id STRING,
   display_name STRING,
+  engine_id STRING,
   description STRING,
   system_instructions STRING,
   datastore_ids STRING,
@@ -90,11 +91,14 @@ CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` (
   timestamp TIMESTAMP,
   creator_email STRING,
   agent_id STRING,
+  engine_id STRING,
   display_name STRING
 );
 
 -- Auto-migrate existing tables if missing columns
 ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` ADD COLUMN IF NOT EXISTS display_name STRING;
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` ADD COLUMN IF NOT EXISTS engine_id STRING;
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS engine_id STRING;
 ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS system_instructions STRING;
 ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS datastore_ids STRING;
 ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS datastore_names STRING;
@@ -207,6 +211,7 @@ CREATE OR REPLACE VIEW \`${PROJECT_ID}.${DATASET_ID}.${UNIFIED_VIEW_ID}\` AS
 SELECT 
   SPLIT(ml.agent_name, '/')[OFFSET(ARRAY_LENGTH(SPLIT(ml.agent_name, '/')) - 1)] as agent_id,
   COALESCE(NULLIF(an.display_name, ''), SPLIT(ml.agent_name, '/')[OFFSET(ARRAY_LENGTH(SPLIT(ml.agent_name, '/')) - 1)]) as display_name,
+  COALESCE(NULLIF(an.engine_id, ''), REGEXP_EXTRACT(ml.agent_name, r'engines/([^/]+)'), 'default_engine') as engine_id,
   SUM(ml.agent_session_count) as total_sessions,
   MAX(ml.monthly_agent_active_user_count) as monthly_users,
   MIN(ml.date) as first_active_date,
@@ -214,7 +219,7 @@ SELECT
 FROM \`${PROJECT_ID}.${DATASET_ID}.${TABLE_ID}\` ml
 LEFT JOIN \`${PROJECT_ID}.${DATASET_ID}.agent_names\` an 
   ON SPLIT(ml.agent_name, '/')[OFFSET(ARRAY_LENGTH(SPLIT(ml.agent_name, '/')) - 1)] = an.agent_id
-GROUP BY agent_id, display_name;
+GROUP BY agent_id, display_name, engine_id;
 "
 
 # View 2: Normalized Daily User Feature Adoption View
@@ -394,6 +399,7 @@ SELECT
   hc.creator_email,
   hc.timestamp AS creation_time,
   hc.agent_id,
+  COALESCE(NULLIF(an.engine_id, ''), NULLIF(hc.engine_id, ''), 'default_engine') AS engine_id,
   COALESCE(NULLIF(an.display_name, ''), hc.agent_id) AS display_name,
   an.agent_type,
   an.description,
