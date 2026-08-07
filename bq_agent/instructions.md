@@ -273,8 +273,22 @@ ORDER BY total_active_users DESC;
 
 ---
 
-## 💡 Response Formatting Guidelines
-1. **Be Concise & Executive-Ready:** Present summary metrics clearly with tables or bullet points.
-2. **Always Resolve Names:** Always use `display_name` (falling back to `agent_id` only if display name is empty).
-3. **Round Percentages:** Present percentage rates rounded to 1 or 2 decimal places (e.g. `45.5%`).
-4. **Dates:** Format dates in standard ISO format (`YYYY-MM-DD`).
+## 💡 Response Formatting Guidelines for Business & Executive Users
+
+1. **🚫 NEVER Output Raw SQL Code Blocks:** 
+   * **Do NOT display SQL queries or SQL syntax** in your response to the user unless they explicitly say "show me the SQL".
+   * Execute the query internally and present ONLY synthesized business insights, clean markdown tables, and charts.
+
+2. **📊 Use Clean Markdown Tables & Key Highlights:**
+   * Lead with a concise 1-2 sentence executive takeaway.
+   * Present multidimensional metrics in clean, structured Markdown tables.
+
+3. **📈 Render Visual ASCII / Markdown Bar Charts:**
+   * Use visual progress/bar charts to represent adoption rates and percentages:
+     * `Chat Adoption:       [████████████████░░░░] 80.0%`
+     * `NotebookLM Adoption: [████████░░░░░░░░░░░░] 40.0%`
+     * `Agent Adoption:      [██████░░░░░░░░░░░░░░] 30.0%`
+
+4. **Always Resolve Names:** Always use `display_name` (falling back to `agent_id` only if display name is empty).
+5. **Round Percentages:** Present percentage rates rounded to 1 or 2 decimal places (e.g. `45.5%`).
+6. **Dates:** Format dates in standard ISO format (`YYYY-MM-DD`).

@@ -251,21 +251,20 @@ To integrate Gemini Enterprise with data in BigQuery, configure a Data Store in 
 
 ### Step 7: Deploy the Conversational Analytics Agent
 
-Once the BigQuery MCP data store is active, deploy the **GE App Business Value** agent in **Agent Designer**:
+You have two flexible deployment paths:
 
-#### 1. Generate the Tailored Prompt
-Run the prompt generator script to automatically read your `.env` configuration, substitute your active Project ID and Dataset ID into all queries, and bundle the reference knowledge base:
-```bash
-uv run python agent_designer/generate_prompt.py
-```
+#### Option A: Agent Designer + BigQuery Data Store (UI Agent)
+1. Generate the tailored prompt:
+   ```bash
+   uv run python agent_designer/generate_prompt.py
+   ```
+2. Open **Gemini Enterprise** > **Agent Designer** > Create **"GE App Business Value"**.
+3. Copy [`agent_designer/prompt.md`](agent_designer/prompt.md) into **Instructions**.
+4. Attach the **`ge-metrics-bigquery-store`** data store created in Step 6 and click **Publish**.
 
-#### 2. Configure Agent Designer
-1. Open the [Google Cloud Console](https://console.cloud.google.com) and navigate to **Gemini Enterprise** > **Agent Designer**.
-2. Create a new agent named **"GE App Business Value"** (or edit your existing agent).
-3. Open the generated [`agent_designer/prompt.md`](agent_designer/prompt.md) file, copy its entire contents, and paste them into the **Instructions** field.
-4. Select the latest model tier (e.g., Gemini 1.5 Pro / Flash).
-5. Under **Data Stores / Connectors**, attach the **`ge-metrics-bigquery-store`** data store created in Step 6.
-6. Click **Create** (or **Publish**) to activate the agent for enterprise users.
+#### Option B: Native BigQuery Data Agent + Gemini Enterprise A2A (Recommended for Zero-MCP Restrictions)
+To bypass custom MCP org-policy restrictions and query base tables directly via native Google Cloud A2A protocol:
+👉 **See the complete [BigQuery Data Agent & A2A Integration Guide](bq_agent/README.md)**.
 
 ---
 
