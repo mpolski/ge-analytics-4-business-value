@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` (
   display_name STRING
 );
 
+-- Auto-migrate existing tables if missing columns
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` ADD COLUMN IF NOT EXISTS display_name STRING;
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS system_instructions STRING;
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS datastore_ids STRING;
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS datastore_names STRING;
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS sub_agents STRING;
+
 CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.cloudaudit_googleapis_com_data_access\` (
   timestamp TIMESTAMP,
   logName STRING,
@@ -387,7 +394,7 @@ SELECT
   hc.creator_email,
   hc.timestamp AS creation_time,
   hc.agent_id,
-  COALESCE(NULLIF(an.display_name, ''), NULLIF(hc.display_name, 'Unknown Name'), hc.agent_id) AS display_name,
+  COALESCE(NULLIF(an.display_name, ''), hc.agent_id) AS display_name,
   an.agent_type,
   an.description,
   an.system_instructions
