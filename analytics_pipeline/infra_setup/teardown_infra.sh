@@ -18,14 +18,20 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # ------------------------------------------------------------------------------
 # Section 1: Load Environment & Validation
 # ------------------------------------------------------------------------------
 if [ -f "$PARENT_DIR/.env" ]; then
-  echo "🔍 Loading environment variables from .env..."
+  echo "🔍 Loading environment variables from analytics_pipeline/.env..."
   set -a
   source "$PARENT_DIR/.env"
+  set +a
+elif [ -f "$ROOT_DIR/.env" ]; then
+  echo "🔍 Loading environment variables from .env..."
+  set -a
+  source "$ROOT_DIR/.env"
   set +a
 elif [ -f .env ]; then
   echo "🔍 Loading environment variables from .env..."
@@ -33,29 +39,40 @@ elif [ -f .env ]; then
   source .env
   set +a
 else
-  echo "❌ Error: .env file not found."
-  exit 1
+  echo "⚠️ Warning: .env file not found. Falling back to active environment variables."
 fi
 
 if [ -z "$PROJECT_ID" ]; then
-  echo "❌ Error: PROJECT_ID is not set in .env file."
+  echo "⚠️ Warning: PROJECT_ID is not set in analytics_pipeline/.env file."
   exit 1
 fi
 
 if [ -z "$DATASET_ID" ]; then
-  echo "❌ Error: DATASET_ID is not set in .env file."
+  echo "⚠️ Warning: DATASET_ID is not set in analytics_pipeline/.env file."
   exit 1
 fi
 
 SINK_NAME=${SINK_NAME:-gemini_agent_creators}
 USAGE_SINK_NAME=${USAGE_SINK_NAME:-gemini_usage_activity_sink}
+FUNCTION_NAME="ge-analytics-nightly-sync"
+JOB_NAME="ge-analytics-nightly-trigger"
+
+# Determine Cloud Function / Scheduler Region
+FN_REGION="${BQ_LOCATION:-us-central1}"
+if [ "$FN_REGION" = "US" ] || [ "$FN_REGION" = "us" ]; then
+  FN_REGION="us-central1"
+elif [ "$FN_REGION" = "EU" ] || [ "$FN_REGION" = "eu" ]; then
+  FN_REGION="europe-west1"
+fi
 
 echo "=============================================================================="
 echo "⚠️  GEMINI ENTERPRISE ANALYTICS - INFRASTRUCTURE TEARDOWN"
 echo "=============================================================================="
-echo "Project ID:  $PROJECT_ID"
-echo "Dataset ID:  $DATASET_ID"
-echo "Sinks:       $SINK_NAME, $USAGE_SINK_NAME"
+echo "Project ID:       $PROJECT_ID"
+echo "Dataset ID:       $DATASET_ID"
+echo "Sinks:            $SINK_NAME, $USAGE_SINK_NAME"
+echo "Cloud Function:   $FUNCTION_NAME ($FN_REGION)"
+echo "Cloud Scheduler:  $JOB_NAME ($FN_REGION)"
 echo "=============================================================================="
 echo ""
 
@@ -76,7 +93,7 @@ echo ""
 # Section 2: Delete Cloud Logging Sinks
 # ------------------------------------------------------------------------------
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🗑️  [1/3] Removing Cloud Logging Sinks..."
+echo "🗑️  [1/4] Removing Cloud Logging Sinks..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Sink 1: Agent Creators Sink
@@ -98,10 +115,35 @@ fi
 echo ""
 
 # ------------------------------------------------------------------------------
-# Section 3: Delete BigQuery Views & Dataset
+# Section 3: Delete Cloud Function & Cloud Scheduler Job
 # ------------------------------------------------------------------------------
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🗑️  [2/3] Removing BigQuery Dataset, Tables, and Views..."
+echo "🗑️  [2/4] Removing Cloud Function & Cloud Scheduler Job..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Scheduler Job
+if gcloud scheduler jobs describe "${JOB_NAME}" --location="${FN_REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud scheduler jobs delete "${JOB_NAME}" --location="${FN_REGION}" --project="${PROJECT_ID}" --quiet
+  echo "  ✅ [Deleted] Cloud Scheduler Job: ${JOB_NAME} (${FN_REGION})"
+else
+  echo "  ℹ️ [Not Found] Cloud Scheduler Job '${JOB_NAME}' does not exist (already removed)."
+fi
+
+# Cloud Function (2nd gen)
+if gcloud functions describe "${FUNCTION_NAME}" --region="${FN_REGION}" --project="${PROJECT_ID}" --gen2 >/dev/null 2>&1; then
+  gcloud functions delete "${FUNCTION_NAME}" --region="${FN_REGION}" --project="${PROJECT_ID}" --gen2 --quiet
+  echo "  ✅ [Deleted] Cloud Function: ${FUNCTION_NAME} (${FN_REGION})"
+else
+  echo "  ℹ️ [Not Found] Cloud Function '${FUNCTION_NAME}' does not exist (already removed)."
+fi
+
+echo ""
+
+# ------------------------------------------------------------------------------
+# Section 4: Delete BigQuery Views & Dataset
+# ------------------------------------------------------------------------------
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🗑️  [3/4] Removing BigQuery Dataset, Tables, and Views..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 if bq show "${PROJECT_ID}:${DATASET_ID}" >/dev/null 2>&1; then
@@ -119,10 +161,10 @@ fi
 echo ""
 
 # ------------------------------------------------------------------------------
-# Section 4: Clean Local Temporary Files
+# Section 5: Clean Local Temporary Files
 # ------------------------------------------------------------------------------
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🧹 [3/3] Cleaning Local Temporary Staging Files..."
+echo "🧹 [4/4] Cleaning Local Temporary Staging Files..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 rm -f /tmp/raw_creator_logs_*.json /tmp/historical_creators_*.jsonl \
@@ -133,5 +175,5 @@ echo "  ✅ [Cleaned] Temporary local staging logs and JSONL files removed."
 echo ""
 
 echo "=============================================================================="
-echo "🎉 TEARDOWN COMPLETE! All analytics resources have been successfully removed."
+echo "🎉 TEARDOWN COMPLETE! All analytics infrastructure has been successfully removed."
 echo "=============================================================================="

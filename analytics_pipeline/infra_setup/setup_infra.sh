@@ -18,22 +18,36 @@ set -e
 # ------------------------------------------------------------------------------
 # Section 1: Environment & Validation
 # ------------------------------------------------------------------------------
-if [ -f .env ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+if [ -f "$PARENT_DIR/.env" ]; then
+  echo "🔍 Loading environment variables from analytics_pipeline/.env..."
+  set -a
+  source "$PARENT_DIR/.env"
+  set +a
+elif [ -f "$ROOT_DIR/.env" ]; then
+  echo "🔍 Loading environment variables from .env..."
+  set -a
+  source "$ROOT_DIR/.env"
+  set +a
+elif [ -f .env ]; then
   echo "🔍 Loading environment variables from .env..."
   set -a
   source .env
   set +a
 else
-  echo "⚠️ .env file not found. Falling back to environment variables."
+  echo "⚠️ Note: .env file not found. Falling back to active environment variables."
 fi
 
 if [ -z "$PROJECT_ID" ]; then
-  echo "❌ Error: PROJECT_ID is not set. Please define PROJECT_ID in .env file."
+  echo "⚠️ Warning: PROJECT_ID is not set. Please define PROJECT_ID in analytics_pipeline/.env file."
   exit 1
 fi
 
 if [ -z "$DATASET_ID" ]; then
-  echo "❌ Error: DATASET_ID is not set. Please define DATASET_ID in .env file."
+  echo "⚠️ Warning: DATASET_ID is not set. Please define DATASET_ID in analytics_pipeline/.env file."
   exit 1
 fi
 
@@ -95,14 +109,17 @@ CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` (
   display_name STRING
 );
 
--- Auto-migrate existing tables if missing columns
-ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` ADD COLUMN IF NOT EXISTS display_name STRING;
-ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` ADD COLUMN IF NOT EXISTS engine_id STRING;
-ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS engine_id STRING;
-ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS system_instructions STRING;
-ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS datastore_ids STRING;
-ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS datastore_names STRING;
-ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\` ADD COLUMN IF NOT EXISTS sub_agents STRING;
+-- Auto-migrate existing tables if missing columns (combined into atomic operations)
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.historical_creators\`
+  ADD COLUMN IF NOT EXISTS display_name STRING,
+  ADD COLUMN IF NOT EXISTS engine_id STRING;
+
+ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\`
+  ADD COLUMN IF NOT EXISTS engine_id STRING,
+  ADD COLUMN IF NOT EXISTS system_instructions STRING,
+  ADD COLUMN IF NOT EXISTS datastore_ids STRING,
+  ADD COLUMN IF NOT EXISTS datastore_names STRING,
+  ADD COLUMN IF NOT EXISTS sub_agents STRING;
 
 CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.cloudaudit_googleapis_com_data_access\` (
   timestamp TIMESTAMP,

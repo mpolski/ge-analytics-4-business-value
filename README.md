@@ -282,10 +282,14 @@ Configure these sample prompts in Agent Designer as **Conversation Starters** to
 
 ## 🧹 Infrastructure Teardown & Clean-up
 
-To completely remove all BigQuery datasets, tables, logging sinks, and views created by this solution:
+To completely remove all provisioned cloud infrastructure created by this solution:
+* **Cloud Logging Sinks:** `gemini_agent_creators`, `gemini_usage_activity_sink`
+* **Cloud Function & Scheduler:** `ge-analytics-nightly-sync`, `ge-analytics-nightly-trigger`
+* **BigQuery Dataset & Tables:** `ge_metrics` (all 7 base tables and 4 enriched views)
+* **Local Staging Files:** `/tmp/*`
 
+Execute the teardown script from the root repository directory:
 ```bash
-chmod +x infra_setup/teardown_infra.sh
-./infra_setup/teardown_infra.sh
+./analytics_pipeline/infra_setup/teardown_infra.sh
 ```
 *(Pass `--force` or `-f` to run in non-interactive mode).*

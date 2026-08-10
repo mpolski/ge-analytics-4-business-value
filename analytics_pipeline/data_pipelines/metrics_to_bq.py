@@ -12,12 +12,45 @@ def export_metrics():
     # 1. Load the variables from the .env file
     load_dotenv()
     
-    # 1. Parse target engines (supports comma-separated list or auto-discovery)
+    project_id = os.getenv("PROJECT_ID")
+    location = os.getenv("GE_LOCATION") or os.getenv("LOCATION", "global")
+    dataset_id = os.getenv("DATASET_ID")
+    table_id = "agent_session_metrics"
+    
+    if not project_id:
+        print("❌ Error: PROJECT_ID is not set. Please define PROJECT_ID in .env file.")
+        sys.exit(1)
+    if not dataset_id:
+        print("❌ Error: DATASET_ID is not set. Please define DATASET_ID in .env file.")
+        sys.exit(1)
+
+    # 2. Authenticate using active gcloud session or ADC
+    token = None
+    try:
+        token = subprocess.check_output(
+            ["gcloud", "auth", "print-access-token"], 
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        pass
+        
+    if not token:
+        try:
+            credentials, _ = google.auth.default(
+                scopes=['https://www.googleapis.com/auth/cloud-platform']
+            )
+            auth_req = google.auth.transport.requests.Request()
+            credentials.refresh(auth_req)
+            token = credentials.token
+        except Exception as e:
+            print(f"❌ Auth failed. Run 'gcloud auth application-default login' first.\nError: {e}")
+            sys.exit(1)
+            
+    # 3. Parse target engines (supports comma-separated list or auto-discovery)
     engine_input = os.getenv("ENGINE_ID", "").strip()
     target_engines = []
     
     if engine_input and engine_input.upper() not in ["ALL", "AUTO", "*"]:
-        # Comma-separated list or single ID (e.g., "engine-1,engine-2")
         target_engines = [e.strip() for e in engine_input.split(",") if e.strip()]
     else:
         # Auto-discover all engines in project/location
@@ -54,45 +87,49 @@ def export_metrics():
         }
     }
     
+    successful_ops = []
+    
     for idx, engine_id in enumerate(target_engines, 1):
         print(f"\n📦 [{idx}/{len(target_engines)}] Triggering export for Engine: '{engine_id}'...")
         url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{engine_id}/analytics:exportMetrics"
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=(10, 30))
-        
-        if response.status_code == 200:
-            operation_name = response.json().get('name')
-            print(f"  ✅ Triggered successfully! Operation: {operation_name}")
-        else:
-            print(f"  ⚠️ Warning: Export failed for {engine_id}: {response.status_code} - {response.text}")
-    
-    if response.status_code == 200:
-        operation_name = response.json().get('name')
-        print(f"✅ Success! Google is processing the export.")
-        print(f"🔍 Operation ID: {operation_name}")
-        
-        # Poll for completion
-        poll_url = f"https://discoveryengine.googleapis.com/v1alpha/{operation_name}"
-        print("⏳ Waiting for export job to complete...")
-        
-        while True:
-            poll_resp = requests.get(poll_url, headers=headers)
-            if poll_resp.status_code == 200:
-                poll_data = poll_resp.json()
-                if poll_data.get("done"):
-                    if "error" in poll_data:
-                        print(f"❌ Export failed: {poll_data['error']}")
-                        sys.exit(1)
-                    else:
-                        print("🎉 Export completed successfully!")
-                        break
+        try:
+            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=(10, 30))
+            if response.status_code == 200:
+                operation_name = response.json().get('name')
+                successful_ops.append(operation_name)
+                print(f"  ✅ Triggered successfully! Operation: {operation_name}")
             else:
-                print(f"⚠️ Failed to check operation status: {poll_resp.status_code}")
+                print(f"  ⚠️ Warning: Export failed for {engine_id}: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"  ⚠️ Exception exporting for {engine_id}: {e}")
+    
+    if successful_ops:
+        print(f"\n✅ Successfully triggered export across {len(successful_ops)} engine(s).")
+        # Poll the last operation for completion
+        last_op = successful_ops[-1]
+        poll_url = f"https://discoveryengine.googleapis.com/v1alpha/{last_op}"
+        print(f"⏳ Waiting for export job to complete ({last_op.split('/')[-1]})...")
+        
+        for _ in range(30):
+            try:
+                poll_resp = requests.get(poll_url, headers=headers, timeout=(10, 20))
+                if poll_resp.status_code == 200:
+                    poll_data = poll_resp.json()
+                    if poll_data.get("done"):
+                        if "error" in poll_data:
+                            print(f"\n❌ Export operation reported error: {poll_data['error']}")
+                        else:
+                            print("\n🎉 Export completed successfully!")
+                        break
+            except Exception:
+                pass
             
-            time.sleep(10)
+            time.sleep(5)
             print(".", end="", flush=True)
-            
+        print("")
     else:
-        print(f"❌ Error {response.status_code}: {response.text}")
+        print("❌ Error: No export operations succeeded.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     export_metrics()
