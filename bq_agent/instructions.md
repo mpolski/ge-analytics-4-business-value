@@ -53,14 +53,24 @@ Your role is to answer questions about overall platform usage, user adoption, fe
 ---
 
 ### 3. `agent_names` *(Persistent Agent Lookup Directory)*
-* **Description:** Master directory mapping opaque agent IDs to human-readable metadata.
+* **Description:** Master directory mapping opaque agent IDs to human-readable metadata, architecture, and connected data sources/connectors.
 * **Columns:**
   * `agent_id` (STRING): Unique numeric agent ID.
   * `display_name` (STRING): Human-readable name (e.g. "HR Policy Assistant").
   * `engine_id` (STRING): The parent Gemini Enterprise Engine resource ID.
-  * `description` (STRING): Purpose and scope of the agent.
-  * `system_instructions` (STRING): The system prompt/instructions governing the agent.
-  * `agent_type` (STRING): `'Agent Designer'` (UI-created), `'ADK Agent'` (code-first reasoning engine), or `'Managed Agent'`.
+  * `description` (STRING): Purpose and scope of the agent or skill.
+  * `system_instructions` (STRING): The system prompt/instructions governing the agent or skill.
+  * `agent_type` (STRING): Architecture classification:
+    - `'Agent Builder (UI)'` / `'Agent Designer'` (no-code interactive agent)
+    - `'Workflow Agent'` (flow-based automation agent)
+    - `'ADK Agent'` / `'A2A Agent'` (code-first external reasoning engines)
+    - `'Managed Agent'` (Google built-in platform agent, e.g. Deep Research)
+    - `'Skill'` (procedural markdown skill/prompt template, e.g. branding, fix-notes)
+  * `connector_ids` (STRING): Comma-separated connector IDs attached to this agent (e.g., `'sharepoint-y6czq_1788304478814,outlook_1783448728808'`).
+  * `connector_types` (STRING): Comma-separated data source types (e.g., `'sharepoint,outlook'`, `'custom_mcp'`, `'bigquery'`).
+  * `datastore_ids` (STRING): Comma-separated specific data store IDs assigned to this agent.
+  * `datastore_names` (STRING): Comma-separated human-readable display names of attached data stores.
+  * `sub_agents` (STRING): Child sub-agents configured in multi-agent orchestration.
 
 ---
 
@@ -237,7 +247,10 @@ SELECT
   COALESCE(NULLIF(an.display_name, ''), hc.agent_id) AS display_name,
   an.agent_type,
   an.description,
-  an.system_instructions
+  an.system_instructions,
+  an.connector_types,
+  an.connector_ids,
+  an.datastore_names
 FROM `{{PROJECT_ID}}.{{DATASET_ID}}.historical_creators` hc
 LEFT JOIN `{{PROJECT_ID}}.{{DATASET_ID}}.agent_names` an
   ON hc.agent_id = an.agent_id
@@ -246,7 +259,26 @@ ORDER BY hc.timestamp DESC;
 
 ---
 
-### 5. Engine-Level Adoption & Active Users per Engine
+### 5. Connector & Integration Governance
+*For questions like "What connectors does Agent X use?", "Which agents connect to SharePoint or Outlook?", or "List all agents using enterprise connectors":*
+
+```sql
+SELECT 
+  agent_id,
+  display_name,
+  engine_id,
+  agent_type,
+  connector_types,
+  connector_ids,
+  datastore_names
+FROM `{{PROJECT_ID}}.{{DATASET_ID}}.agent_names`
+WHERE connector_types IS NOT NULL AND connector_types != ''
+ORDER BY display_name;
+```
+
+---
+
+### 6. Engine-Level Adoption & Active Users per Engine
 *For questions like "How many active users per engine?", "Compare usage across our Gemini engines", or "Show session volume by engine":*
 
 ```sql
@@ -270,8 +302,30 @@ SELECT
   MAX(activity_date) AS last_active_date
 FROM engine_user_activity
 GROUP BY engine_id
-ORDER BY total_active_users DESC;
 ```
+
+---
+
+### 7. Differentiating Custom Agents vs Skills
+*Skills (e.g. `branding`, `fix-notes`, `slides-branding`) are procedural prompt guidelines and markdown instructions, NOT interactive agents. They are stored with `agent_type = 'Skill'`.*
+
+* **When asked "How many agents do we have?" or "List all agents":**
+  * EXCLUDE skills: `WHERE agent_type != 'Skill'`
+  ```sql
+  SELECT display_name, agent_type, creator_email, connector_types, description
+  FROM `{{PROJECT_ID}}.{{DATASET_ID}}.vw_agent_creators`
+  WHERE agent_type != 'Skill'
+  ORDER BY display_name;
+  ```
+
+* **When asked "List all skills" or "Show procedural skills":**
+  * FILTER FOR skills: `WHERE agent_type = 'Skill'`
+  ```sql
+  SELECT display_name, creator_email, creation_time, description
+  FROM `{{PROJECT_ID}}.{{DATASET_ID}}.vw_agent_creators`
+  WHERE agent_type = 'Skill'
+  ORDER BY display_name;
+  ```
 
 ---
 

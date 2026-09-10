@@ -207,13 +207,64 @@ stage_backfill_creators() {
     --limit=10000 > "${raw_file}"
 
   if [ -s "${raw_file}" ] && [ "$(cat "${raw_file}")" != "[]" ]; then
-    cat "${raw_file}" | jq -c '.[]? | {
-      timestamp: .timestamp,
-      creator_email: (.protoPayload.authenticationInfo.principalEmail // (.protoPayload.authenticationInfo.principalSubject | sub("^user:"; "") | split("/") | last) // "unknown_email"),
-      agent_id: (((.protoPayload.request.agent.name // .protoPayload.response.name // .protoPayload.resourceName // "unknown/unknown_id") | split("/") | last) | tostring),
-      engine_id: (((.protoPayload.request.agent.name // .protoPayload.response.name // .protoPayload.resourceName // "") | split("/engines/") | last | split("/") | first) // "default_engine"),
-      display_name: (.protoPayload.request.agent.displayName // .protoPayload.response.displayName // "Unknown Name")
-    }' > "${output_file}"
+    $PYTHON_EXEC -c "
+import json
+
+with open('${raw_file}') as f:
+    entries = json.load(f)
+
+records = []
+for item in entries:
+    proto = item.get('protoPayload', {})
+    auth = proto.get('authenticationInfo', {})
+    email = auth.get('principalEmail')
+    subj = auth.get('principalSubject', '')
+    if not email:
+        if subj.startswith('user:'):
+            email = subj[5:]
+        elif '/' in subj:
+            email = subj.split('/')[-1]
+        else:
+            email = subj or 'unknown_email'
+            
+    req = proto.get('request', {})
+    resp = proto.get('response', {})
+    res_name = proto.get('resourceName', '')
+    
+    agent_id = ''
+    if req.get('agent', {}).get('name'):
+        agent_id = req['agent']['name'].split('/')[-1]
+    elif req.get('agentId'):
+        agent_id = str(req['agentId'])
+    elif resp.get('name') and '/agents/' in resp.get('name'):
+        agent_id = resp['name'].split('/agents/')[-1].split('/')[0]
+    elif '/agents/' in res_name:
+        agent_id = res_name.split('/agents/')[-1].split('/')[0]
+    elif res_name:
+        agent_id = res_name.split('/')[-1]
+
+    full_path = req.get('agent', {}).get('name') or req.get('parent') or resp.get('name') or res_name
+    engine_id = 'default_engine'
+    if '/engines/' in full_path:
+        engine_id = full_path.split('/engines/')[1].split('/')[0]
+
+    disp_name = (req.get('agent', {}).get('displayName') or 
+                 resp.get('displayName') or 
+                 resp.get('agent', {}).get('displayName') or 'Unknown Name')
+                 
+    if agent_id and agent_id != 'default_assistant':
+        records.append({
+            'timestamp': item.get('timestamp'),
+            'creator_email': email,
+            'agent_id': str(agent_id),
+            'engine_id': str(engine_id),
+            'display_name': str(disp_name)
+        })
+
+with open('${output_file}', 'w') as f:
+    for r in records:
+        f.write(json.dumps(r) + '\n')
+"
 
     local count
     count=$(wc -l < "${output_file}")

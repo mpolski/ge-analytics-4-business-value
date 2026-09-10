@@ -17,7 +17,7 @@ While Gemini Enterprise provides rich native capabilities, enterprise visibility
 | **📈 Daily Active Users & Growth Trends** | Track organization-wide Daily Active Users (DAU) and adoption curves across days, weeks, and months. |
 | **🔄 Cross-Product Feature Adoption** | Quantify employee adoption percentages across **Core Chat**, **NotebookLM Enterprise**, and **Custom Agents**, highlighting multi-feature power users. |
 | **🏆 Agent Popularity & Session Volume** | Rank custom enterprise agents by session count, monthly active user volume, and engagement lifecycle (`first_active_date` to `last_active_date`). |
-| **🛡️ Agent Governance & Creator Attribution** | Identify exactly who built each agent (`creator_email`), creation timestamps, underlying system instructions, and architecture (`ADK Agent`, `Agent Designer`, `Managed Agent`). |
+| **🛡️ Agent Governance & Connector Auditing** | Identify exactly who built each agent or skill (`creator_email`), creation timestamps, attached enterprise connectors (`connector_types`, `connector_ids` e.g. SharePoint, Outlook, BigQuery MCP, GitHub), data stores, underlying system instructions, and architecture (`ADK Agent`, `Agent Builder (UI)`, `Workflow Agent`, `Skill`, `Managed Agent`). |
 | **💬 Natural Language Analytics** | Empower leadership, HR, and business teams to query complex usage metrics using everyday conversational English through the Gemini Enterprise chat interface. |
 
 ---
@@ -56,8 +56,8 @@ The pipeline exports and merges disparate telemetry streams into structured tabl
    Daily user-level activity flags and specific agent usage history for per-user engagement reporting.
 3. **`vw_unified_metrics` (Agent Leaderboards):**
    Aggregates session counts, monthly active users, and first/last active dates by human-readable agent display name.
-4. **`vw_agent_creators` (Governance & Creator Attribution):**
-   Maps agent IDs to creator email, creation timestamp, agent architecture, description, and system instructions.
+4. **`vw_agent_creators` (Governance, Creator Attribution & Connectors):**
+   Maps agent IDs to creator email, creation timestamp, agent architecture, description, system instructions, attached connectors (`connector_types`, `connector_ids`), and data stores (`datastore_names`).
 
 ---
 
@@ -67,19 +67,29 @@ The pipeline exports and merges disparate telemetry streams into structured tabl
 
 #### 1. Deployment & Admin IAM Roles
 Ensure the administrator or service account deploying the infrastructure has:
+* **Project IAM Admin** (`roles/resourcemanager.projectIamAdmin`) - To bind required IAM roles to the service accounts.
 * **Service Usage Admin** (`roles/serviceusage.serviceUsageAdmin`) - To enable BigQuery, Cloud Functions, and Cloud Logging APIs.
 * **BigQuery Data Owner** (`roles/bigquery.dataOwner`) & **Job User** (`roles/bigquery.jobUser`) - To provision and query datasets.
 * **Logs Configuration Writer** (`roles/logging.configWriter`) - To configure Cloud Logging sinks.
 * **Cloud Functions Admin** (`roles/cloudfunctions.admin`) & **Cloud Scheduler Admin** (`roles/cloudscheduler.admin`) - To deploy the serverless nightly sync.
-* **Discovery Engine Admin** (`roles/discoveryengine.admin`) - To manage Gemini Enterprise App configurations and agents.
+* **Discovery Engine Admin** (`roles/discoveryengine.admin`) - To manage Gemini Enterprise App configurations, list agents, and export metrics.
 
-#### 2. End-User / Consumer Permissions (For Querying via Agent)
+#### 2. Serverless Runtime Service Account Roles (Automated Daily Sync)
+The Cloud Function / Cloud Run runtime service account (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com` or custom SA) requires:
+* **Discovery Engine Editor** (`roles/discoveryengine.editor`) - To query active agent definitions (`discoveryengine.agents.list`) and trigger session metrics export (`discoveryengine.analytics.exportMetrics`).
+* **BigQuery Data Editor** (`roles/bigquery.dataEditor`) - To create temporary staging tables and upsert records into `agent_names`.
+* **BigQuery Job User** (`roles/bigquery.jobUser`) - To execute BigQuery load jobs and `MERGE` queries (`bigquery.jobs.create`).
+* **Cloud Build Builder** (`roles/cloudbuild.builds.builder`) - To build the Cloud Function container during deployment.
+
+> *Note: [`deploy.sh`](analytics_pipeline/cloud_function/deploy.sh) and [`setup_infra.sh`](analytics_pipeline/infra_setup/setup_infra.sh) automatically bind these roles to the service account during execution.*
+
+#### 3. End-User / Consumer Permissions (For Querying via Agent)
 Because BigQuery MCP tool calls execute under the security context of the **end user**, all employees (or their Entra ID / Workforce Identity Federation pool) interacting with the agent must have:
 * **MCP Tool User** (`roles/mcp.toolUser`)
 * **BigQuery Job User** (`roles/bigquery.jobUser`)
 * **BigQuery Data Viewer** (`roles/bigquery.dataViewer`) on the analytics dataset
 
-#### 3. Organization Policy Requirements
+#### 4. Organization Policy Requirements
 If your organization enforces strict Organization Policies, verify that Model Context Protocol (MCP) server connectors are not blocked:
 * **Constraint:** `constraints/discoveryengine.managed.disableCustomMcpServerConnector` (ensure this is set to **False** or allowed for your project/folder).
 * Ensure managed tool connectors for BigQuery are permitted under your Gemini Enterprise security policy.
@@ -195,6 +205,20 @@ chmod +x cloud_function/deploy.sh
 
 * **Zero Custom Containers:** Uses standard Google Cloud Function Python runtimes (no Docker or Artifact Registry setup needed).
 * **Automated Trigger:** Configured to run every night at **00:00 UTC** (`0 0 * * *`) with secure service account OIDC authentication.
+* **Automated IAM Provisioning:** `deploy.sh` automatically grants the required runtime roles (`roles/discoveryengine.editor`, `roles/bigquery.dataEditor`, `roles/bigquery.jobUser`, `roles/cloudbuild.builds.builder`) to the runtime service account (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`).
+
+*(Optional) If your environment restricts automatic IAM policy updates, grant the runtime roles manually beforehand:*
+```bash
+PROJECT_NUM=$(gcloud projects describe <YOUR_PROJECT_ID> --format='value(projectNumber)')
+SA="${PROJECT_NUM}-compute@developer.gserviceaccount.com"
+
+# Grant Discovery Engine Editor (list agents & export metrics)
+gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> --member="serviceAccount:$SA" --role="roles/discoveryengine.editor"
+
+# Grant BigQuery Data Editor & Job User (merge tables & run staging jobs)
+gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> --member="serviceAccount:$SA" --role="roles/bigquery.dataEditor"
+gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> --member="serviceAccount:$SA" --role="roles/bigquery.jobUser"
+```
 
 ---
 
@@ -276,6 +300,7 @@ Configure these sample prompts in Agent Designer as **Conversation Starters** to
 * **Feature Adoption:** *"What is the feature adoption breakdown between Chat, NotebookLM, and Custom Agents for this week?"*
 * **Agent Popularity:** *"Show me the top 5 most used custom agents ranked by total session volume."*
 * **Creator Governance:** *"Show me a list of all agent creators in our company and the agents they've built."*
+* **Connector Auditing:** *"Which agents connect to our SharePoint or Outlook enterprise connectors?"*
 * **Power Users:** *"How many employees are power users leveraging both custom agents and NotebookLM?"*
 
 ---

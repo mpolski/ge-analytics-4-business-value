@@ -62,15 +62,26 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   --project="$PROJECT_ID" --quiet
 
-# Grant Cloud Build permissions to default service account
+# Grant required IAM permissions to the Cloud Function runtime & build service account
 PROJECT_NUM=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
-SERVICE_ACCOUNT="${PROJECT_NUM}-compute@developer.gserviceaccount.com"
+SERVICE_ACCOUNT="${CUSTOM_SERVICE_ACCOUNT:-${PROJECT_NUM}-compute@developer.gserviceaccount.com}"
 
-echo "Granting Cloud Build permissions to: ${SERVICE_ACCOUNT}..."
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:${SERVICE_ACCOUNT}" \
-  --role="roles/cloudbuild.builds.builder" \
-  --condition=None --quiet >/dev/null 2>&1 || true
+echo "Configuring IAM permissions for service account: ${SERVICE_ACCOUNT}..."
+RUNTIME_ROLES=(
+  "roles/cloudbuild.builds.builder"
+  "roles/discoveryengine.editor"
+  "roles/bigquery.dataEditor"
+  "roles/bigquery.jobUser"
+)
+
+for ROLE in "${RUNTIME_ROLES[@]}"; do
+  echo "  Granting ${ROLE} to ${SERVICE_ACCOUNT}..."
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="${ROLE}" \
+    --condition=None --quiet >/dev/null 2>&1 || echo "⚠️ Could not auto-grant ${ROLE}. Please ensure caller has roles/resourcemanager.projectIamAdmin."
+done
+
 
 # 1. Deploy Cloud Function (2nd Gen)
 echo ""
@@ -83,6 +94,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
   --entry-point="sync_metrics" \
   --trigger-http \
   --no-allow-unauthenticated \
+  --service-account="$SERVICE_ACCOUNT" \
   --set-env-vars="PROJECT_ID=${PROJECT_ID},ENGINE_ID=${ENGINE_ID},DATASET_ID=${DATASET_ID},GE_LOCATION=${GE_LOCATION:-global}" \
   --project="$PROJECT_ID" \
   --memory=512MB \
@@ -95,9 +107,6 @@ echo "✅ Function deployed successfully: $FUNCTION_URL"
 # 2. Configure Cloud Scheduler Job
 echo ""
 echo "🚀 [2/2] Configuring Cloud Scheduler Job '$SCHEDULER_JOB_NAME'..."
-
-# Get or use default App Engine / Compute service account for invocation
-SERVICE_ACCOUNT=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"-compute@developer.gserviceaccount.com"
 
 # Grant the service account permissions to invoke the function
 gcloud functions add-invoker-policy-binding "$FUNCTION_NAME" \

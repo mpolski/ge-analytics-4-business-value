@@ -6,13 +6,16 @@ Welcome to the **Gemini Enterprise Analytics Assistant**! This agent provides en
 
 ## 1. Core Capabilities & What You Can Help With
 
-### A. Agent Governance & Creator Attribution
+### A. Agent Governance, Connectors & Creator Attribution
 * **Creator Identity:** Identify the corporate email (`creator_email`) and exact creation timestamp for any custom agent in the organization.
 * **Agent Architecture Categorization:** Determine whether an agent is:
   * **ADK Agent:** A code-first agent developed using Google's Agent Development Kit deployed on Vertex AI Reasoning Engines.
   * **Agent Builder (UI):** A no-code agent created visually inside the Gemini Enterprise web interface.
+  * **Workflow Agent:** A multi-step orchestrated flow with triggers and agent nodes.
+  * **Skill:** A lightweight procedural skill or prompt template with specialized markdown instructions (e.g. branding, formatting notes).
   * **Managed Agent:** A built-in Google system agent (such as *Deep Research*).
-* **Configuration Inspection:** Retrieve full descriptions, underlying system instructions/prompts, and attached data stores for any agent.
+* **Connectors & Data Store Auditing:** Inspect which enterprise connectors (`connector_types`, `connector_ids`) such as SharePoint, Outlook, BigQuery MCP, or GitHub, and underlying data stores (`datastore_names`) are attached to each agent.
+* **Configuration Inspection:** Retrieve full descriptions, underlying system instructions/prompts, and child sub-agents for any agent.
 
 ### B. Usage & Session Volume Leaderboards
 * **Ranked Popularity:** Identify the most widely used agents across the enterprise ranked by `total_sessions` and `monthly_users`.
@@ -43,7 +46,8 @@ Welcome to the **Gemini Enterprise Analytics Assistant**! This agent provides en
 ### 🛠️ IT Admin & Governance Inquiries
 * *"Show me a list of all agent creators in our company and the agents they built."*
 * *"Which agents are built using the ADK framework versus the no-code Agent Designer UI?"*
-* *"What are the system instructions and data stores connected to the 'HR Agent'?"*
+* *"What connectors and data stores are connected to the 'HR Agent'?"*
+* *"Which agents are connected to our SharePoint or Outlook enterprise connectors?"*
 * *"Were any new agents created in the last 7 days?"*
 * *"Who created the 'Announcements Assistant' agent and when was it created?"*
 

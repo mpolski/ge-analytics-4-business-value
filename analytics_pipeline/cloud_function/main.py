@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 import time
 import requests
 import functions_framework
@@ -14,70 +15,205 @@ def get_auth_token():
     credentials.refresh(Request())
     return credentials.token
 
+def extract_connector_info(conn_name, data_source=None):
+    """Extracts clean connector_id and connector_type from resource paths or dataSource."""
+    conn_id = ""
+    if conn_name:
+        m = re.search(r'collections/([^/]+)/dataConnector', conn_name)
+        if m:
+            conn_id = m.group(1)
+        else:
+            parts = conn_name.strip("/").split("/")
+            if len(parts) >= 2 and parts[-1] == "dataConnector":
+                conn_id = parts[-2]
+            elif parts[-1] != "dataConnector":
+                conn_id = parts[-1]
+                
+    ctype = data_source or ""
+    if not ctype and conn_id:
+        ctype = conn_id.split("_")[0].split("-")[0]
+    return conn_id, ctype
+
 def fetch_and_sync_agent_names(project_id, location, engine_id, dataset_id):
     """Step 1: Fetch active agent definitions and update BigQuery agent_names table."""
     token = get_auth_token()
-    base_url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{engine_id}/assistants/default_assistant/agents"
     headers = {
         'Authorization': f'Bearer {token}',
         'Content-Type': 'application/json',
         'x-goog-user-project': project_id
     }
     
-    # 1. Fetch agents
-    agents = []
-    page_token = None
-    params = {}
-    while True:
-        res = requests.get(base_url, headers=headers, params=params)
-        if res.status_code != 200:
-            print(f"⚠️ Error fetching agents: {res.status_code} - {res.text}")
-            break
-        data = res.json()
-        agents.extend(data.get("agents", []))
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-        params["pageToken"] = page_token
+    # 0. Pre-fetch datastores for display name resolution
+    ds_lookup = {}
+    try:
+        ds_url = f"https://discoveryengine.googleapis.com/v1/projects/{project_id}/locations/{location}/collections/default_collection/dataStores"
+        ds_res = requests.get(ds_url, headers=headers, timeout=(10, 20))
+        if ds_res.status_code == 200:
+            for ds in ds_res.json().get("dataStores", []):
+                ds_id = ds.get("name", "").split("/")[-1]
+                if ds_id:
+                    ds_lookup[ds_id] = ds.get("displayName", ds_id)
+    except Exception as e:
+        print(f"⚠️ Could not pre-fetch data stores: {e}")
 
-    # 2. Format records
+    # Determine target engines
+    target_engines = []
+    if engine_id and engine_id.upper() not in ["ALL", "AUTO", "*"]:
+        target_engines = [e.strip() for e in engine_id.split(",") if e.strip()]
+    else:
+        list_url = f"https://discoveryengine.googleapis.com/v1/projects/{project_id}/locations/{location}/collections/default_collection/engines"
+        try:
+            res = requests.get(list_url, headers=headers, timeout=(10, 20))
+            if res.status_code == 200:
+                target_engines = [e.get("name", "").split("/")[-1] for e in res.json().get("engines", []) if e.get("name")]
+        except Exception as e:
+            print(f"⚠️ Auto-discovery error: {e}")
+
+    if not target_engines and engine_id:
+        target_engines = [engine_id]
+
     rows_to_insert = []
-    for agent in agents:
-        agent_name_path = agent.get("name", "")
-        agent_id = agent_name_path.split("/")[-1] if agent_name_path else ""
-        if not agent_id or agent_id in ['workflow_summary_agent', 'default_assistant']:
-            continue
+    for eng in target_engines:
+        base_url = f"https://discoveryengine.googleapis.com/v1alpha/projects/{project_id}/locations/{location}/collections/default_collection/engines/{eng}/assistants/default_assistant/agents"
+        agents = []
+        page_token = None
+        params = {}
+        while True:
+            res = requests.get(base_url, headers=headers, params=params)
+            if res.status_code != 200:
+                print(f"⚠️ Error fetching agents for engine {eng}: {res.status_code} - {res.text}")
+                break
+            data = res.json()
+            agents.extend(data.get("agents", []))
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+            params["pageToken"] = page_token
+
+        for agent in agents:
+            agent_name_path = agent.get("name", "")
+            aid = agent_name_path.split("/")[-1] if agent_name_path else ""
+            if not aid or aid in ['workflow_summary_agent', 'default_assistant']:
+                continue
+                
+            display_name = agent.get("displayName", agent.get("draftDisplayName", "Unknown"))
+            description = agent.get("description", agent.get("draftDescription", ""))
             
-        display_name = agent.get("displayName", "")
-        description = agent.get("description", "")
-        
-        agent_type = "Agent Designer"
-        if "adkAgentDefinition" in agent:
-            agent_type = "ADK Agent"
-        elif "managedAgentDefinition" in agent:
-            agent_type = "Managed Agent"
-            
-        system_instructions = ""
-        low_code = agent.get("lowCodeAgentDefinition", {})
-        nodes = low_code.get("nodes", []) or low_code.get("deployedNodes", [])
-        if nodes:
-            llm_node = nodes[0].get("llmAgentNode", {})
-            system_instructions = llm_node.get("instruction", "")
-            
-        rows_to_insert.append({
-            "agent_id": agent_id,
-            "display_name": display_name,
-            "agent_type": agent_type,
-            "description": description,
-            "system_instructions": system_instructions
-        })
+            agent_type = "Unknown"
+            system_instructions = ""
+            sub_agents_str = ""
+            agent_datastore_ids = set()
+            agent_connector_ids = set()
+            agent_connector_types = set()
+
+            if "adkAgentDefinition" in agent:
+                agent_type = "ADK Agent"
+            elif "lowCodeAgentDefinition" in agent:
+                agent_type = "Agent Builder (UI)"
+                builder_def = agent["lowCodeAgentDefinition"]
+                agents_list = builder_def.get("deployedNodes", builder_def.get("draftAgents", builder_def.get("nodes", builder_def.get("agents", []))))
+                root_id = builder_def.get("deployedRootAgentId", builder_def.get("rootAgentId", builder_def.get("draftRootAgentId", "root_agent")))
+                
+                sub_instructions = []
+                sub_agent_names = []
+                for a in agents_list:
+                    node = a.get("llmAgentNode", {})
+                    inst = node.get("instruction", "")
+                    if a.get("id") != root_id:
+                        sub_agent_names.append(a.get('displayName', 'Sub-Agent'))
+                    if inst:
+                        if a.get("id") == root_id:
+                            system_instructions = inst + "\n\n" + system_instructions
+                        else:
+                            sub_instructions.append(f"[{a.get('displayName', 'Sub-Agent')}] {inst}")
+                    for spec in node.get("dataStoreSpecs", {}).get("specs", []):
+                        ds = spec.get("dataStore", "").split("/")[-1]
+                        if ds: agent_datastore_ids.add(ds)
+                    for conn in node.get("dataConnectors", []):
+                        cid, ctype = extract_connector_info(conn.get("name", ""), conn.get("dataSource"))
+                        if cid: agent_connector_ids.add(cid)
+                        if ctype: agent_connector_types.add(ctype)
+                    for sel in node.get("connectorToolSelections", []):
+                        dc = sel.get("dataConnector", {})
+                        cid, ctype = extract_connector_info(dc.get("name", ""), dc.get("dataSource"))
+                        if cid: agent_connector_ids.add(cid)
+                        if ctype: agent_connector_types.add(ctype)
+                if sub_instructions:
+                    system_instructions += "\nSub-Agent Instructions:\n" + "\n".join(sub_instructions)
+                sub_agents_str = ", ".join(sub_agent_names)
+
+            elif "workflowAgentDefinition" in agent:
+                agent_type = "Workflow Agent"
+                wf = agent["workflowAgentDefinition"]
+                agent_flow = wf.get("agentFlow", {})
+                flow_nodes = agent_flow.get("nodes", []) or wf.get("workflowDefinition", {}).get("nodes", [])
+                wf_instructions = []
+                for fn in flow_nodes:
+                    trig = fn.get("connectorEventTrigger", {})
+                    if trig:
+                        dc = trig.get("dataConnector", {})
+                        cid, ctype = extract_connector_info(dc.get("name", ""), dc.get("dataSource"))
+                        if cid: agent_connector_ids.add(cid)
+                        if ctype: agent_connector_types.add(ctype)
+                        for spec in trig.get("dataStoreSpecs", {}).get("specs", []):
+                            ds = spec.get("dataStore", "").split("/")[-1]
+                            if ds: agent_datastore_ids.add(ds)
+                    ag_node = fn.get("agentNode", {})
+                    if ag_node:
+                        inst = ag_node.get("instruction", "")
+                        dname = fn.get("displayName", fn.get("id", "Agent Node"))
+                        if inst: wf_instructions.append(f"[{dname}] {inst}")
+                        for sel in ag_node.get("connectorToolSelections", []):
+                            dc = sel.get("dataConnector", {})
+                            cid, ctype = extract_connector_info(dc.get("name", ""), dc.get("dataSource"))
+                            if cid: agent_connector_ids.add(cid)
+                            if ctype: agent_connector_types.add(ctype)
+                        for spec in ag_node.get("dataStoreSpecs", {}).get("specs", []):
+                            ds = spec.get("dataStore", "").split("/")[-1]
+                            if ds: agent_datastore_ids.add(ds)
+                if wf_instructions:
+                    system_instructions = "\n\n".join(wf_instructions)
+
+            elif "skillAgentDefinition" in agent:
+                agent_type = "Skill"
+                sk = agent["skillAgentDefinition"]
+                if "instruction" in sk: system_instructions = sk["instruction"]
+
+            elif "managedAgentDefinition" in agent:
+                agent_type = "Managed Agent"
+
+            elif "a2aAgentDefinition" in agent:
+                agent_type = "A2A Agent"
+
+            # Derive connector info from datastores if not explicit
+            for ds in agent_datastore_ids:
+                m = re.match(r"^([a-zA-Z0-9\-]+_[0-9]+)_(.+)$", ds)
+                if m:
+                    cid = m.group(1)
+                    agent_connector_ids.add(cid)
+                    if not any(cid in x for x in agent_connector_types):
+                        agent_connector_types.add(cid.split("_")[0].split("-")[0])
+
+            sorted_ds = sorted(list(agent_datastore_ids))
+            rows_to_insert.append({
+                "agent_id": aid,
+                "display_name": display_name,
+                "engine_id": eng,
+                "agent_type": agent_type,
+                "description": description,
+                "system_instructions": system_instructions,
+                "datastore_ids": ",".join(sorted_ds),
+                "datastore_names": ",".join([ds_lookup.get(ds, ds) for ds in sorted_ds]),
+                "connector_ids": ",".join(sorted(list(agent_connector_ids))),
+                "connector_types": ",".join(sorted(list(agent_connector_types))),
+                "sub_agents": sub_agents_str
+            })
 
     # 3. Upsert into BigQuery
     bq_client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.agent_names"
     
     if rows_to_insert:
-        # Load via temporary table or direct merge
         staging_table = f"{project_id}.{dataset_id}._staging_agent_names"
         job_config = bigquery.LoadJobConfig(
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
@@ -93,12 +229,18 @@ def fetch_and_sync_agent_names(project_id, location, engine_id, dataset_id):
         WHEN MATCHED THEN
           UPDATE SET 
             display_name = S.display_name,
+            engine_id = S.engine_id,
             agent_type = S.agent_type,
             description = S.description,
-            system_instructions = S.system_instructions
+            system_instructions = S.system_instructions,
+            datastore_ids = S.datastore_ids,
+            datastore_names = S.datastore_names,
+            connector_ids = S.connector_ids,
+            connector_types = S.connector_types,
+            sub_agents = S.sub_agents
         WHEN NOT MATCHED THEN
-          INSERT (agent_id, display_name, agent_type, description, system_instructions)
-          VALUES (S.agent_id, S.display_name, S.agent_type, S.description, S.system_instructions);
+          INSERT (agent_id, display_name, engine_id, agent_type, description, system_instructions, datastore_ids, datastore_names, connector_ids, connector_types, sub_agents)
+          VALUES (S.agent_id, S.display_name, S.engine_id, S.agent_type, S.description, S.system_instructions, S.datastore_ids, S.datastore_names, S.connector_ids, S.connector_types, S.sub_agents);
         """
         bq_client.query(merge_sql).result()
         bq_client.delete_table(staging_table, not_found_ok=True)
@@ -180,7 +322,7 @@ def trigger_metrics_export(project_id, location, engine_input, dataset_id):
                 operations.append(f"{engine_id}: {op_name}")
                 print(f"✅ Triggered export for '{engine_id}'. Op: {op_name}")
             else:
-                print(f"⚠️ Export skipped/failed for '{engine_id}': {res.status_code}")
+                print(f"⚠️ Export skipped/failed for '{engine_id}': {res.status_code} - {res.text}")
         except Exception as e:
             print(f"⚠️ Export error for '{engine_id}': {e}")
             
@@ -205,6 +347,8 @@ def sync_metrics(request):
         
         # Step 3: Discovery Engine session metrics export across all target engines
         export_ok, op_detail = trigger_metrics_export(project_id, location, engine_input, dataset_id)
+        if not export_ok:
+            raise RuntimeError(f"Failed to trigger metrics export on any engine. Details: {op_detail or 'None'}")
         
         response_data = {
             "status": "success",

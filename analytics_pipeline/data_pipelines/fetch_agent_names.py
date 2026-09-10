@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import re
 import subprocess
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -71,8 +72,27 @@ def fetch_all_pages(session, base_url, headers, items_key):
         params["pageToken"] = page_token
     return results
 
-def process_single_agent(session, headers, agt, engine_name, PROJECT_ID, LOCATION, datastore_ids_str, datastore_names_str):
-    """Fetches details for a single agent."""
+def extract_connector_info(conn_name, data_source=None):
+    """Extracts clean connector_id and connector_type from resource paths or dataSource."""
+    conn_id = ""
+    if conn_name:
+        m = re.search(r'collections/([^/]+)/dataConnector', conn_name)
+        if m:
+            conn_id = m.group(1)
+        else:
+            parts = conn_name.strip("/").split("/")
+            if len(parts) >= 2 and parts[-1] == "dataConnector":
+                conn_id = parts[-2]
+            elif parts[-1] != "dataConnector":
+                conn_id = parts[-1]
+                
+    ctype = data_source or ""
+    if not ctype and conn_id:
+        ctype = conn_id.split("_")[0].split("-")[0]
+    return conn_id, ctype
+
+def process_single_agent(session, headers, agt, engine_name, PROJECT_ID, LOCATION, ds_lookup):
+    """Fetches details for a single agent and extracts agent-specific data stores and connectors."""
     raw_agt_name = agt.get("name", "")
     if not raw_agt_name:
         return None
@@ -85,6 +105,10 @@ def process_single_agent(session, headers, agt, engine_name, PROJECT_ID, LOCATIO
     system_instructions_string = ""
     sub_agents_str = ""
     agent_type = "Unknown"
+    
+    agent_datastore_ids = set()
+    agent_connector_ids = set()
+    agent_connector_types = set()
     
     try:
         agt_det_res = session.get(agt_details_url, headers=headers, timeout=(10, 20))
@@ -115,13 +139,80 @@ def process_single_agent(session, headers, agt, engine_name, PROJECT_ID, LOCATIO
                             system_instructions_string = inst + "\n\n" + system_instructions_string
                         else:
                             sub_instructions.append(f"[{a.get('displayName', 'Sub-Agent')}] {inst}")
+                            
+                    # Extract data stores from low-code agent node
+                    for spec in node.get("dataStoreSpecs", {}).get("specs", []):
+                        ds = spec.get("dataStore", "").split("/")[-1]
+                        if ds:
+                            agent_datastore_ids.add(ds)
+
+                    # Extract dataConnectors
+                    for conn in node.get("dataConnectors", []):
+                        cid, ctype = extract_connector_info(conn.get("name", ""), conn.get("dataSource"))
+                        if cid: agent_connector_ids.add(cid)
+                        if ctype: agent_connector_types.add(ctype)
+
+                    # Extract connectorToolSelections
+                    for sel in node.get("connectorToolSelections", []):
+                        dc = sel.get("dataConnector", {})
+                        cid, ctype = extract_connector_info(dc.get("name", ""), dc.get("dataSource"))
+                        if cid: agent_connector_ids.add(cid)
+                        if ctype: agent_connector_types.add(ctype)
                 
                 if sub_instructions:
                     system_instructions_string += "\nSub-Agent Instructions:\n" + "\n".join(sub_instructions)
                 
                 sub_agents_str = ", ".join(sub_agent_names)
+
+            elif "workflowAgentDefinition" in agt_data:
+                agent_type = "Workflow Agent"
+                wf = agt_data["workflowAgentDefinition"]
+                agent_flow = wf.get("agentFlow", {})
+                flow_nodes = agent_flow.get("nodes", []) or wf.get("workflowDefinition", {}).get("nodes", [])
+                
+                wf_instructions = []
+                for fn in flow_nodes:
+                    # Check CONNECTOR_EVENT_TRIGGER
+                    trig = fn.get("connectorEventTrigger", {})
+                    if trig:
+                        dc = trig.get("dataConnector", {})
+                        cid, ctype = extract_connector_info(dc.get("name", ""), dc.get("dataSource"))
+                        if cid: agent_connector_ids.add(cid)
+                        if ctype: agent_connector_types.add(ctype)
+                        for spec in trig.get("dataStoreSpecs", {}).get("specs", []):
+                            ds = spec.get("dataStore", "").split("/")[-1]
+                            if ds: agent_datastore_ids.add(ds)
+                    
+                    # Check AGENT_NODE
+                    ag_node = fn.get("agentNode", {})
+                    if ag_node:
+                        inst = ag_node.get("instruction", "")
+                        dname = fn.get("displayName", fn.get("id", "Agent Node"))
+                        if inst:
+                            wf_instructions.append(f"[{dname}] {inst}")
+                        for sel in ag_node.get("connectorToolSelections", []):
+                            dc = sel.get("dataConnector", {})
+                            cid, ctype = extract_connector_info(dc.get("name", ""), dc.get("dataSource"))
+                            if cid: agent_connector_ids.add(cid)
+                            if ctype: agent_connector_types.add(ctype)
+                        for spec in ag_node.get("dataStoreSpecs", {}).get("specs", []):
+                            ds = spec.get("dataStore", "").split("/")[-1]
+                            if ds: agent_datastore_ids.add(ds)
+
+                if wf_instructions:
+                    system_instructions_string = "\n\n".join(wf_instructions)
+
+            elif "skillAgentDefinition" in agt_data:
+                agent_type = "Skill"
+                sk = agt_data["skillAgentDefinition"]
+                if "instruction" in sk:
+                    system_instructions_string = sk["instruction"]
+
             elif "managedAgentDefinition" in agt_data:
                 agent_type = "Managed Agent"
+
+            elif "a2aAgentDefinition" in agt_data:
+                agent_type = "A2A Agent"
             
             if not system_instructions_string:
                 instructions_obj = agt_data.get("instructions", {})
@@ -129,11 +220,28 @@ def process_single_agent(session, headers, agt, engine_name, PROJECT_ID, LOCATIO
                 extracted_prompts = [item.get("instruction", "") for item in sys_inst_list if item.get("instruction")]
                 if extracted_prompts:
                     system_instructions_string = "\n".join(extracted_prompts)
-    except Exception as e:
+
+            # Derive connector ID and type from datastores if not already explicitly captured
+            for ds in agent_datastore_ids:
+                m = re.match(r"^([a-zA-Z0-9\-]+_[0-9]+)_(.+)$", ds)
+                if m:
+                    cid = m.group(1)
+                    agent_connector_ids.add(cid)
+                    if not any(cid in x for x in agent_connector_types):
+                        ctype = cid.split("_")[0].split("-")[0]
+                        agent_connector_types.add(ctype)
+
+    except Exception:
         # Fallback to list metadata if detail fetch fails
         pass
 
     engine_id_clean = engine_name.split("/")[-1] if engine_name else "default_engine"
+
+    sorted_ds_ids = sorted(list(agent_datastore_ids))
+    datastore_ids_str = ",".join(sorted_ds_ids)
+    datastore_names_str = ",".join([ds_lookup.get(ds, ds) for ds in sorted_ds_ids])
+    connector_ids_str = ",".join(sorted(list(agent_connector_ids)))
+    connector_types_str = ",".join(sorted(list(agent_connector_types)))
 
     return {
         "agent_id": str(agent_id),
@@ -143,6 +251,8 @@ def process_single_agent(session, headers, agt, engine_name, PROJECT_ID, LOCATIO
         "system_instructions": system_instructions_string,
         "datastore_ids": datastore_ids_str,
         "datastore_names": datastore_names_str,
+        "connector_ids": connector_ids_str,
+        "connector_types": connector_types_str,
         "agent_type": agent_type,
         "sub_agents": sub_agents_str
     }
@@ -166,6 +276,19 @@ def main():
     
     session = create_http_session()
 
+    print(f"📦 Pre-fetching collection data stores for display name resolution...")
+    ds_lookup = {}
+    try:
+        ds_url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores"
+        data_stores = fetch_all_pages(session, ds_url, headers, "dataStores")
+        for ds in data_stores:
+            ds_id = ds.get("name", "").split("/")[-1]
+            if ds_id:
+                ds_lookup[ds_id] = ds.get("displayName", ds_id)
+        print(f"  ✓ Cached {len(ds_lookup)} data stores.")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not pre-fetch data stores: {e}")
+
     print(f"🔍 Discovering engines in project '{PROJECT_ID}' ({LOCATION})...")
     url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/engines"
     engines = fetch_all_pages(session, url, headers, "engines")
@@ -175,31 +298,11 @@ def main():
         sys.exit(0)
 
     all_raw_agents = []
-    engine_contexts = {}
 
     for engine in engines:
         engine_name = engine.get("name")
         if not engine_name:
             continue
-            
-        # Fetch DataStores
-        datastore_ids_str = ""
-        datastore_names_str = ""
-        try:
-            eng_res = session.get(f"https://discoveryengine.googleapis.com/v1/{engine_name}", headers=headers, timeout=(10, 20))
-            if eng_res.status_code == 200:
-                data_store_ids = eng_res.json().get("dataStoreIds", [])
-                datastore_ids_str = ",".join(data_store_ids)
-                ds_names = []
-                for ds_id in data_store_ids:
-                    ds_url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{ds_id}"
-                    ds_res = session.get(ds_url, headers=headers, timeout=(10, 20))
-                    ds_names.append(ds_res.json().get("displayName", ds_id) if ds_res.status_code == 200 else ds_id)
-                datastore_names_str = ",".join(ds_names)
-        except Exception:
-            pass
-
-        engine_contexts[engine_name] = (datastore_ids_str, datastore_names_str)
 
         # Fetch Assistants and raw Agents
         assistants_url = f"https://discoveryengine.googleapis.com/v1alpha/{engine_name}/assistants"
@@ -229,9 +332,8 @@ def main():
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = []
         for agt, engine_name in all_raw_agents:
-            ds_ids, ds_names = engine_contexts.get(engine_name, ("", ""))
             futures.append(executor.submit(
-                process_single_agent, session, headers, agt, engine_name, PROJECT_ID, LOCATION, ds_ids, ds_names
+                process_single_agent, session, headers, agt, engine_name, PROJECT_ID, LOCATION, ds_lookup
             ))
 
         completed = 0

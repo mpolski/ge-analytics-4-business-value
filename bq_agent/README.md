@@ -19,7 +19,7 @@ When building the agent in BigQuery Studio, select the **5 Core Data tables** fr
 
 1. **`discoveryengine_googleapis_com_gemini_enterprise_user_activity`**: Real-time conversational turns with Gemini Enterprise Assistant (general chat) and custom agents.
 2. **`discoveryengine_googleapis_com_notebooklm_enterprise_user_activity`**: Real-time turn interactions and document actions in NotebookLM Enterprise.
-3. **`agent_names`**: Persistent directory mapping opaque numeric agent IDs to display names, system prompts, data stores, and architectures (`ADK` vs `UI`).
+3. **`agent_names`**: Persistent directory mapping opaque numeric agent IDs to display names, system prompts, connectors (`connector_types`, `connector_ids`), data stores (`datastore_names`), and architectures (`ADK`, `Agent Designer`, `Workflow Agent`).
 4. **`historical_creators`**: Audit trail mapping custom agent IDs to creator email addresses, creation timestamps, and engine IDs.
 5. **`agent_session_metrics`**: Native Discovery Engine periodic session volume and monthly active user (MAU) aggregates.
 

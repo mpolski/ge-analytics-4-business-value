@@ -38,14 +38,17 @@ The analytics pipeline organizes data into **5 storage tables** in the `gemini_a
   - **Caller Identity (`protopayload_auditlog.authenticationInfo.principalEmail`)**: The user who triggered the API call (e.g. `creator@domain.com`).
 
 #### 3. `agent_names` *(Persistent Agent Directory)*
-- **What it is**: A persistent lookup directory that maps numeric agent IDs to human-readable information.
+- **What it is**: A persistent lookup directory that maps numeric agent IDs to human-readable information, architecture, and connected data sources.
 - **What gets logged**:
   - `agent_id`: The unique numeric identifier (e.g. `11172752661556541681`).
-  - `display_name`: The human-readable title (e.g. `Document Summary & Analysis Agent`).
+  - `display_name`: The human-readable title (e.g. `HR Policy Assistant`).
   - `engine_id`: The engine resource ID hosting the agent (e.g. `ge-app-global-1_1780344440285`).
-  - `agent_type`: Identifies the architecture (`'Agent Designer'` for no-code UI agents vs `'ADK Agent'`).
+  - `agent_type`: Identifies the architecture (`'Agent Builder (UI)'`, `'Workflow Agent'`, `'Skill'`, `'ADK Agent'`, or `'Managed Agent'`).
   - `description` & `system_instructions`: Stored prompt instructions and agent purpose.
-- **How it updates**: Automatically auto-harvests new agent names from real-time user activity logs and periodic sync jobs. **Rows are never deleted**, ensuring historical metrics retain agent names even if the agent is deleted from Google Cloud.
+  - `connector_ids` & `connector_types`: Connected enterprise connectors (e.g. SharePoint, Outlook, BigQuery MCP, GitHub) mapped directly from agent node definitions.
+  - `datastore_ids` & `datastore_names`: Specific data store IDs and human-readable names assigned to the agent.
+  - `sub_agents`: Comma-separated names of configured child sub-agents.
+- **How it updates**: Automatically auto-harvests new agent configurations from the Discovery Engine API and real-time user activity logs during sync jobs. **Rows are never deleted**, ensuring historical metrics retain agent names even if the agent is deleted from Google Cloud.
 
 #### 4. `historical_creators` *(Governance & Attribution Table)*
 - **What it is**: An audit record mapping each custom agent to the specific person who created it.
@@ -87,6 +90,10 @@ The analytics pipeline organizes data into **5 storage tables** in the `gemini_a
 #### 3. `vw_unified_metrics` *(Agent Performance Leaderboard)*
 - **Purpose**: Combines API session metrics with human-readable display names from `agent_names`.
 - **What's inside**: `agent_id`, `display_name`, `total_sessions` (cumulative session count), `monthly_users`, `first_active_date`, and `last_active_date`.
+
+#### 4. `vw_agent_creators` *(Governance & Connected Integrations)*
+- **Purpose**: Pre-joined view connecting historical creator attribution with live agent metadata and connector configurations.
+- **What's inside**: `creator_email`, `creation_time`, `agent_id`, `engine_id`, `display_name`, `agent_type`, `description`, `system_instructions`, `connector_ids`, `connector_types`, `datastore_ids`, `datastore_names`, and `sub_agents`.
 
 ---
 

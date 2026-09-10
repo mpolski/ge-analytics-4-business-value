@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.agent_names\` (
   system_instructions STRING,
   datastore_ids STRING,
   datastore_names STRING,
+  connector_ids STRING,
+  connector_types STRING,
   agent_type STRING,
   sub_agents STRING
 );
@@ -119,7 +121,9 @@ ALTER TABLE \`${PROJECT_ID}.${DATASET_ID}.agent_names\`
   ADD COLUMN IF NOT EXISTS system_instructions STRING,
   ADD COLUMN IF NOT EXISTS datastore_ids STRING,
   ADD COLUMN IF NOT EXISTS datastore_names STRING,
-  ADD COLUMN IF NOT EXISTS sub_agents STRING;
+  ADD COLUMN IF NOT EXISTS sub_agents STRING,
+  ADD COLUMN IF NOT EXISTS connector_ids STRING,
+  ADD COLUMN IF NOT EXISTS connector_types STRING;
 
 CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.cloudaudit_googleapis_com_data_access\` (
   timestamp TIMESTAMP,
@@ -174,27 +178,36 @@ if [ -n "${TOKEN}" ]; then
 fi
 
 # Sink 1: Agent Creation Events
-echo "Configuring Log Sink '${SINK_NAME}'..."
-gcloud logging sinks create "${SINK_NAME}" \
-  "bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${DATASET_ID}" \
-  --log-filter='protoPayload.serviceName="discoveryengine.googleapis.com" AND protoPayload.methodName="google.cloud.discoveryengine.v1.EngineService.CreateEngine"' \
-  --use-partitioned-tables \
-  --project="${PROJECT_ID}" || echo "ℹ️ Sink '${SINK_NAME}' may already exist."
+SINK_FILTER_1='protoPayload.serviceName="discoveryengine.googleapis.com" AND (
+  protoPayload.methodName="google.cloud.discoveryengine.v1.EngineService.CreateEngine"
+  OR protoPayload.methodName="google.cloud.discoveryengine.v1main.AgentService.CreateAgent"
+)'
+if gcloud logging sinks describe "${SINK_NAME}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "Updating existing Log Sink '${SINK_NAME}'..."
+  gcloud logging sinks update "${SINK_NAME}" \
+    "bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${DATASET_ID}" \
+    --log-filter="${SINK_FILTER_1}" \
+    --project="${PROJECT_ID}" --quiet
+else
+  echo "Configuring Log Sink '${SINK_NAME}'..."
+  gcloud logging sinks create "${SINK_NAME}" \
+    "bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${DATASET_ID}" \
+    --log-filter="${SINK_FILTER_1}" \
+    --use-partitioned-tables \
+    --project="${PROJECT_ID}"
+fi
 
 SINK_SA_1=$(gcloud logging sinks describe "${SINK_NAME}" --project="${PROJECT_ID}" --format='value(writerIdentity)')
 echo "Granting BigQuery Data Editor access to: ${SINK_SA_1}..."
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="${SINK_SA_1}" \
   --role="roles/bigquery.dataEditor" \
-  --condition=None || echo "⚠️ Please ask an IAM admin to grant roles/bigquery.dataEditor to ${SINK_SA_1}"
+  --condition=None --quiet >/dev/null 2>&1 || echo "⚠️ Please ask an IAM admin to grant roles/bigquery.dataEditor to ${SINK_SA_1}"
 
 # Sink 2: Real-time User Activity Logs
-echo "Configuring Log Sink '${USAGE_SINK_NAME}'..."
-gcloud logging sinks create "${USAGE_SINK_NAME}" \
-  "bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${DATASET_ID}" \
-  --log-filter='
-    logName="projects/'"${PROJECT_ID}"'/logs/discoveryengine.googleapis.com%2Fgemini_enterprise_user_activity"
+SINK_FILTER_2='logName="projects/'"${PROJECT_ID}"'/logs/discoveryengine.googleapis.com%2Fgemini_enterprise_user_activity"
     OR logName="projects/'"${PROJECT_ID}"'/logs/discoveryengine.googleapis.com%2Fnotebooklm_enterprise_user_activity"
+    OR logName="projects/'"${PROJECT_ID}"'/logs/discoveryengine.googleapis.com%2Fconnector_activity"
     OR (protoPayload.serviceName="discoveryengine.googleapis.com" AND (
       protoPayload.methodName="google.cloud.discoveryengine.v1.AssistantService.Assist"
       OR protoPayload.methodName="google.cloud.discoveryengine.v1.AssistantService.StreamAssist"
@@ -202,9 +215,22 @@ gcloud logging sinks create "${USAGE_SINK_NAME}" \
       OR protoPayload.methodName="google.cloud.discoveryengine.v1.NotebookService.GetNotebook"
       OR protoPayload.methodName="google.cloud.discoveryengine.v1.NotebookService.InteractSources"
       OR protoPayload.methodName="google.cloud.discoveryengine.v1.NotebookService.GenerateFreeFormStreamed"
-    ))' \
-  --use-partitioned-tables \
-  --project="${PROJECT_ID}" || echo "ℹ️ Sink '${USAGE_SINK_NAME}' may already exist."
+    ))'
+
+if gcloud logging sinks describe "${USAGE_SINK_NAME}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "Updating existing Log Sink '${USAGE_SINK_NAME}'..."
+  gcloud logging sinks update "${USAGE_SINK_NAME}" \
+    "bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${DATASET_ID}" \
+    --log-filter="${SINK_FILTER_2}" \
+    --project="${PROJECT_ID}" --quiet
+else
+  echo "Configuring Log Sink '${USAGE_SINK_NAME}'..."
+  gcloud logging sinks create "${USAGE_SINK_NAME}" \
+    "bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${DATASET_ID}" \
+    --log-filter="${SINK_FILTER_2}" \
+    --use-partitioned-tables \
+    --project="${PROJECT_ID}"
+fi
 
 SINK_SA_2=$(gcloud logging sinks describe "${USAGE_SINK_NAME}" --project="${PROJECT_ID}" --format='value(writerIdentity)')
 echo "Granting BigQuery Data Editor access to: ${SINK_SA_2}..."
@@ -214,6 +240,25 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --condition=None || echo "⚠️ Please ask an IAM admin to grant roles/bigquery.dataEditor to ${SINK_SA_2}"
 
 echo "✅ Log sinks configured."
+
+# Pipeline Service Account IAM Roles (for automated syncs & metric exports)
+PROJECT_NUM=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)' 2>/dev/null || true)
+if [ -n "$PROJECT_NUM" ]; then
+  SVC_ACC="${CUSTOM_SERVICE_ACCOUNT:-${PROJECT_NUM}-compute@developer.gserviceaccount.com}"
+  echo "Configuring pipeline service account IAM roles for: ${SVC_ACC}..."
+  PIPELINE_ROLES=(
+    "roles/discoveryengine.editor"
+    "roles/bigquery.dataEditor"
+    "roles/bigquery.jobUser"
+  )
+  for R in "${PIPELINE_ROLES[@]}"; do
+    gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+      --member="serviceAccount:${SVC_ACC}" \
+      --role="${R}" \
+      --condition=None --quiet >/dev/null 2>&1 || echo "ℹ️ Note: Could not auto-grant ${R} to ${SVC_ACC} (requires project IAM admin)."
+  done
+  echo "✅ Pipeline service account permissions configured."
+fi
 
 # ------------------------------------------------------------------------------
 # Section 4: Enriched BigQuery Views
@@ -413,18 +458,23 @@ echo "Creating view 'vw_agent_creators'..."
 bq query --use_legacy_sql=false "
 CREATE OR REPLACE VIEW \`${PROJECT_ID}.${DATASET_ID}.vw_agent_creators\` AS
 SELECT 
-  hc.creator_email,
+  COALESCE(hc.creator_email, 'Unknown') AS creator_email,
   hc.timestamp AS creation_time,
-  hc.agent_id,
+  COALESCE(an.agent_id, hc.agent_id) AS agent_id,
   COALESCE(NULLIF(an.engine_id, ''), NULLIF(hc.engine_id, ''), 'default_engine') AS engine_id,
   COALESCE(NULLIF(an.display_name, ''), hc.agent_id) AS display_name,
   an.agent_type,
   an.description,
-  an.system_instructions
+  an.system_instructions,
+  an.connector_ids,
+  an.connector_types,
+  an.datastore_ids,
+  an.datastore_names,
+  an.sub_agents
 FROM \`${PROJECT_ID}.${DATASET_ID}.historical_creators\` hc
-LEFT JOIN \`${PROJECT_ID}.${DATASET_ID}.agent_names\` an
+FULL OUTER JOIN \`${PROJECT_ID}.${DATASET_ID}.agent_names\` an
   ON hc.agent_id = an.agent_id
-ORDER BY hc.timestamp DESC;
+ORDER BY creation_time DESC NULLS LAST;
 "
 
 echo "✅ All BigQuery views created successfully."
