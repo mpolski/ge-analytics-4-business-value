@@ -222,14 +222,36 @@ gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> --member="serviceAccoun
 
 ---
 
-### Step 5: End-User & Workforce Identity Permissions (Required for MCP Tools)
+### Step 5: End-User & Identity Permissions (Required for MCP Tools)
 
-In Gemini Enterprise, BigQuery tool calls execute **on behalf of the authenticated end-user**. Before creating the data store and testing your agent, ensure your end-users (or their Workforce Identity Federation / Entra ID principal set) have the following IAM roles on the Google Cloud project:
+In Gemini Enterprise, BigQuery tool calls execute **on behalf of the authenticated end-user**. Before creating the data store and testing your agent, ensure your end-users (via Google Cloud IdP / Google Workspace, Google Groups, or Workforce Identity Federation) have the required IAM roles on the Google Cloud project.
 
+Set your `IDENTITY` variable based on your environment:
+
+#### Option A: Google Cloud IdP / Google Workspace (Cloud Identity)
 ```bash
-# Replace <YOUR_IDENTITY> with your user email or Entra ID / WIF principal set
+# For a single user:
+IDENTITY="user:your-email@yourcompany.com"
+
+# OR for a Google Group (Recommended for teams/pilots):
+IDENTITY="group:gemini-users@yourcompany.com"
+
+# OR for your entire Google Workspace / Cloud Identity domain:
+IDENTITY="domain:yourcompany.com"
+```
+
+#### Option B: Workforce Identity Federation (WIF / Entra ID / Okta)
+```bash
+# For an entire workforce pool:
 IDENTITY="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL_ID>/*"
 
+# OR for a specific group in your workforce pool:
+IDENTITY="principalSet://iam.googleapis.com/locations/global/workforcePools/<POOL_ID>/group/<GROUP_NAME>"
+```
+
+#### Grant Required Roles
+Once `IDENTITY` is set, run the following commands:
+```bash
 # 1. Permission to execute MCP tools in Gemini Enterprise
 gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> \
     --member="$IDENTITY" \
@@ -256,20 +278,18 @@ To integrate Gemini Enterprise with data in BigQuery, configure a Data Store in 
 1. In the Google Cloud Console, navigate to **Gemini Enterprise** > **Data stores**.
 2. Click **Create data store** (`+`).
 3. Under **Select a data source**, select the **BigQuery** connector (or **Custom MCP Server**).
-4. Configure your connection to point to your analytics dataset (`ge_metrics`).
-5. Select your multi-region location and assign a name (e.g., `ge-metrics-bigquery-store`).
+4. Configure your connection to point to your analytics dataset (use the `DATASET_ID` defined in your `.env`, e.g., `busines_value_agent` or `ge_metrics`).
+5. Select your multi-region location (e.g., `US` or `EU`, matching `BQ_LOCATION`) and assign a name (e.g., `ge-metrics-bigquery-store`).
 6. Click **Create** and monitor the data store list until the status changes from `Creating` to **`Active`**.
 
-#### 2. Enable & Optimize Actions (Tools)
-1. Open `ge-metrics-bigquery-store` from the **Data stores** list.
-2. Click **Actions** > **Reload custom actions** to fetch available BigQuery tools (`tools/list`).
-3. Select the analytical query actions to enable (e.g., `execute_sql_readonly`, `describe_table`).
-4. Click **Enable actions**.
-5. *(Recommended Performance Tip)* Ensure analytical query tools are configured with `"readOnlyHint": True` to bypass manual user-confirmation popups, enabling fluid conversational dashboards and multi-table queries without interruptions:
-   ```python
-   # Annotation on tool definition skips manual confirmation prompts for read-only queries
-   @mcp.tool(annotations={"destructiveHint": False, "readOnlyHint": True})
-   ```
+#### 2. Enable Actions (Tools)
+1. Open your BigQuery data store from the **Data stores** list.
+2. In the **Actions** tab, click **Reload actions** (or browse available actions) to list the tools exposed by the BigQuery MCP service.
+3. Select the analytical query actions to enable:
+   - ✅ `execute_sql_readonly`
+   - ✅ `describe_table`
+   - ✅ `list_tables`
+4. Click **Enable actions** (or **Save**). These read-only tools execute automatically during conversations without prompting the end user.
 
 ---
 

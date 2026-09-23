@@ -263,6 +263,8 @@ def main():
     LOCATION = os.getenv("GE_LOCATION", "global")
     DATASET_ID = os.getenv("DATASET_ID")
 
+    BQ_LOCATION = os.getenv("BQ_LOCATION")
+
     if not PROJECT_ID or not DATASET_ID:
         print("❌ Error: PROJECT_ID or DATASET_ID missing in .env.")
         sys.exit(1)
@@ -353,22 +355,73 @@ def main():
     # Write to BigQuery (agent_names table)
     if records:
         print(f"🚀 Loading {len(records)} agent records into BigQuery: {PROJECT_ID}.{DATASET_ID}.agent_names...")
+        
+        # Ensure destination table exists and schema includes all expected columns
+        schema_sql = f"""
+        CREATE TABLE IF NOT EXISTS `{PROJECT_ID}.{DATASET_ID}.agent_names` (
+          agent_id STRING,
+          display_name STRING,
+          engine_id STRING,
+          description STRING,
+          system_instructions STRING,
+          datastore_ids STRING,
+          datastore_names STRING,
+          connector_ids STRING,
+          connector_types STRING,
+          agent_type STRING,
+          sub_agents STRING
+        );
+        ALTER TABLE `{PROJECT_ID}.{DATASET_ID}.agent_names`
+          ADD COLUMN IF NOT EXISTS engine_id STRING,
+          ADD COLUMN IF NOT EXISTS system_instructions STRING,
+          ADD COLUMN IF NOT EXISTS datastore_ids STRING,
+          ADD COLUMN IF NOT EXISTS datastore_names STRING,
+          ADD COLUMN IF NOT EXISTS sub_agents STRING,
+          ADD COLUMN IF NOT EXISTS connector_ids STRING,
+          ADD COLUMN IF NOT EXISTS connector_types STRING;
+        """
+        try:
+            subprocess.run([
+                "bq", "query",
+                f"--project_id={PROJECT_ID}",
+                "--use_legacy_sql=false",
+                schema_sql
+            ], capture_output=True, text=True, check=False)
+        except Exception:
+            pass
+
         temp_jsonl = f"/tmp/agent_names_{os.getpid()}.jsonl"
         with open(temp_jsonl, "w", encoding="utf-8") as f:
             for rec in records:
                 f.write(json.dumps(rec) + "\n")
                 
-        subprocess.check_call([
+        bq_cmd = [
             "bq", "load",
             f"--project_id={PROJECT_ID}",
             "--source_format=NEWLINE_DELIMITED_JSON",
             "--replace",
+            "--autodetect",
+        ]
+        if BQ_LOCATION:
+            bq_cmd.append(f"--location={BQ_LOCATION}")
+        bq_cmd.extend([
             f"{PROJECT_ID}:{DATASET_ID}.agent_names",
             temp_jsonl
         ])
-        if os.path.exists(temp_jsonl):
-            os.remove(temp_jsonl)
-        print(f"✅ Successfully updated {len(records)} Agent Name directory records in BigQuery.")
+
+        try:
+            res = subprocess.run(bq_cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                print(f"❌ BigQuery load failed with exit code {res.returncode}:")
+                if res.stderr:
+                    print(res.stderr.strip())
+                if res.stdout:
+                    print(res.stdout.strip())
+                sys.exit(res.returncode)
+            print(f"✅ Successfully updated {len(records)} Agent Name directory records in BigQuery.")
+        finally:
+            if os.path.exists(temp_jsonl):
+                os.remove(temp_jsonl)
 
 if __name__ == "__main__":
     main()

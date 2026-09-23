@@ -369,7 +369,7 @@ WITH normalized_logs AS (
     COALESCE(
       JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.userIamPrincipal'),
       JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal'),
-      jsonPayload.useriamprincipal
+      SAFE.STRING(jsonPayload.useriamprincipal)
     ) AS user_email,
     DATE(timestamp) AS activity_date,
     FALSE AS is_chat,
@@ -380,7 +380,7 @@ WITH normalized_logs AS (
   WHERE COALESCE(
     JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.userIamPrincipal'),
     JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal'),
-    jsonPayload.useriamprincipal
+    SAFE.STRING(jsonPayload.useriamprincipal)
   ) IS NOT NULL
 )
 SELECT

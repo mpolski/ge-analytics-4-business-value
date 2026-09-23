@@ -15,7 +15,7 @@ A direct, table-based conversational AI analytics agent configured in **BigQuery
 
 ## 🏛️ Core Data Storage Tables
 
-When building the agent in BigQuery Studio, select the **5 Core Data tables** from your analytics dataset (`ge_metrics`):
+When building the agent in BigQuery Studio, select the **5 Core Data tables** from your analytics dataset (e.g., `busines_value_agent` or `ge_metrics`, matching `DATASET_ID` in `.env`):
 
 1. **`discoveryengine_googleapis_com_gemini_enterprise_user_activity`**: Real-time conversational turns with Gemini Enterprise Assistant (general chat) and custom agents.
 2. **`discoveryengine_googleapis_com_notebooklm_enterprise_user_activity`**: Real-time turn interactions and document actions in NotebookLM Enterprise.

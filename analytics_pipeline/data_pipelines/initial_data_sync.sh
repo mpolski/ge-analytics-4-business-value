@@ -5,8 +5,8 @@
 #   One-stop initial data ingestion & backfill pipeline for Gemini Enterprise Analytics.
 #   Executes all 4 stages in sequence with live progress animations:
 #     Stage 1: Fetch Live Agent Metadata from API (fetch_agent_names.py)
-#     Stage 2: Backfill Historical Creators (365 days) from Cloud Audit Logs
-#     Stage 3: Backfill Historical User Activity (365 days) from Cloud Logging
+#     Stage 2: Backfill Historical Creators from Cloud Audit Logs
+#     Stage 3: Backfill Historical User Activity from Cloud Logging
 #     Stage 4: Synchronize Agent Directory & Export Session Metrics (metrics_to_bq.py)
 #
 # Requirements:
@@ -193,18 +193,30 @@ stage_fetch_api_metadata() {
   $PYTHON_EXEC data_pipelines/fetch_agent_names.py
 }
 
-# Stage 2: Historical Creators Backfill (365 Days)
+# Stage 2: Historical Creators Backfill
 stage_backfill_creators() {
   local raw_file="/tmp/raw_creator_logs_$$.json"
   local output_file="/tmp/historical_creators_$$.jsonl"
+  local freshness="${BACKFILL_DAYS:-${CREATOR_BACKFILL_DAYS:-90d}}"
+  if [[ "$freshness" =~ ^[0-9]+$ ]]; then freshness="${freshness}d"; fi
 
-  echo "Scanning Cloud Audit Logs for historical agent creations (past 365 days)..."
-  gcloud logging read \
-    'logName="projects/'"${PROJECT_ID}"'/logs/cloudaudit.googleapis.com%2Factivity" AND protoPayload.serviceName="discoveryengine.googleapis.com" AND protoPayload.methodName=~"CreateAgent"' \
+  local cmd_timeout=""
+  if command -v timeout >/dev/null 2>&1; then
+    cmd_timeout="timeout 180s"
+  fi
+
+  echo "Scanning Cloud Audit Logs for historical agent creations (past ${freshness})..."
+  local err_file="/tmp/gcloud_creator_err_$$.log"
+  if ! $cmd_timeout gcloud logging read \
+    'logName="projects/'"${PROJECT_ID}"'/logs/cloudaudit.googleapis.com%2Factivity" AND protoPayload.serviceName="discoveryengine.googleapis.com" AND protoPayload.methodName:("CreateAgent" OR "CreateEngine")' \
     --project="${PROJECT_ID}" \
-    --freshness=365d \
+    --freshness="${freshness}" \
     --format="json" \
-    --limit=10000 > "${raw_file}"
+    --limit=2500 > "${raw_file}" 2> "${err_file}"; then
+      echo "⚠️ Notice: Cloud Logging read timed out or completed with warnings. Continuing pipeline..."
+      cat "${err_file}" 2>/dev/null | grep -E "ERROR|Deadline|quota" || true
+  fi
+  rm -f "${err_file}"
 
   if [ -s "${raw_file}" ] && [ "$(cat "${raw_file}")" != "[]" ]; then
     $PYTHON_EXEC -c "
@@ -269,51 +281,77 @@ with open('${output_file}', 'w') as f:
     local count
     count=$(wc -l < "${output_file}")
     echo "Loading ${count} historical creator records into ${PROJECT_ID}:${DATASET_ID}.historical_creators..."
+    local bq_loc_flag=""
+    if [ -n "$BQ_LOCATION" ]; then bq_loc_flag="--location=${BQ_LOCATION}"; fi
     bq load \
       --project_id="${PROJECT_ID}" \
       --source_format=NEWLINE_DELIMITED_JSON \
       --schema="timestamp:TIMESTAMP,creator_email:STRING,agent_id:STRING,engine_id:STRING,display_name:STRING" \
       --replace \
+      --ignore_unknown_values \
+      ${bq_loc_flag} \
       "${PROJECT_ID}:${DATASET_ID}.historical_creators" \
       "${output_file}"
     echo "✅ Loaded ${count} creator records."
   else
-    echo "ℹ️ No historical agent creation logs found in past 365 days."
+    echo "ℹ️ No historical agent creation logs found in past ${freshness}."
   fi
 
   rm -f "${raw_file}" "${output_file}"
 }
 
-# Stage 3: Historical User Activity Backfill (365 Days)
+# Stage 3: Historical User Activity Backfill
 stage_backfill_user_activity() {
   local raw_file="/tmp/raw_user_activity_$$.json"
   local output_file="/tmp/historical_user_activity_$$.jsonl"
+  local freshness="${BACKFILL_DAYS:-${ACTIVITY_BACKFILL_DAYS:-90d}}"
+  if [[ "$freshness" =~ ^[0-9]+$ ]]; then freshness="${freshness}d"; fi
+
+  local cmd_timeout=""
+  if command -v timeout >/dev/null 2>&1; then
+    cmd_timeout="timeout 180s"
+  fi
 
   # Part A: Data Access Logs
-  echo "Fetching historical Data Access audit logs (past 365 days)..."
-  gcloud logging read \
+  echo "Fetching historical Data Access audit logs (past ${freshness})..."
+  local err_file_a="/tmp/gcloud_data_access_err_$$.log"
+  if ! $cmd_timeout gcloud logging read \
     'logName="projects/'"${PROJECT_ID}"'/logs/cloudaudit.googleapis.com%2Fdata_access" AND protoPayload.serviceName="discoveryengine.googleapis.com"' \
     --project="${PROJECT_ID}" \
-    --freshness=365d \
+    --freshness="${freshness}" \
     --format="json" \
-    --limit=50000 > "${raw_file}"
+    --limit=10000 > "${raw_file}" 2> "${err_file_a}"; then
+      echo "⚠️ Notice: Data Access log read timed out or encountered warnings. Continuing..."
+      cat "${err_file_a}" 2>/dev/null | grep -E "ERROR|Deadline|quota" || true
+  fi
+  rm -f "${err_file_a}"
 
   if [ -s "${raw_file}" ] && [ "$(cat "${raw_file}")" != "[]" ]; then
-    cat "${raw_file}" | jq -c '.[]? | 
-      .protopayload_auditlog = .protoPayload | 
-      del(.protoPayload) | 
-      if .protopayload_auditlog.request then .protopayload_auditlog.requestJson = (.protopayload_auditlog.request | tojson) | del(.protopayload_auditlog.request) else . end | 
-      del(.protopayload_auditlog.response) | 
-      if .protopayload_auditlog.status then del(.protopayload_auditlog.status.details) else . end | 
-      walk(if type == "object" then with_entries(select(.key | startswith("@") | not)) else . end)' > "${output_file}"
+    cat "${raw_file}" | jq -c '.[]? | {
+      timestamp: .timestamp,
+      logName: .logName,
+      insertId: .insertId,
+      severity: .severity,
+      protopayload_auditlog: (
+        .protoPayload |
+        if .request then .requestJson = (.request | tojson) | del(.request) else . end |
+        del(.response) |
+        if .status then del(.status.details) else . end |
+        walk(if type == "object" then with_entries(select(.key | startswith("@") | not)) else . end)
+      )
+    }' > "${output_file}"
 
     local count
     count=$(wc -l < "${output_file}")
     echo "Loading ${count} Data Access records into ${PROJECT_ID}:${DATASET_ID}.cloudaudit_googleapis_com_data_access..."
+    local bq_loc_flag=""
+    if [ -n "$BQ_LOCATION" ]; then bq_loc_flag="--location=${BQ_LOCATION}"; fi
     bq load \
       --project_id="${PROJECT_ID}" \
       --source_format=NEWLINE_DELIMITED_JSON \
+      --ignore_unknown_values \
       --max_bad_records=1000 \
+      ${bq_loc_flag} \
       "${PROJECT_ID}:${DATASET_ID}.cloudaudit_googleapis_com_data_access" \
       "${output_file}"
     echo "✅ Loaded ${count} Data Access records."
@@ -321,13 +359,18 @@ stage_backfill_user_activity() {
   rm -f "${raw_file}" "${output_file}"
 
   # Part B: Gemini Enterprise User Activity Logs
-  echo "Fetching historical User Activity logs (past 365 days)..."
-  gcloud logging read \
+  echo "Fetching historical User Activity logs (past ${freshness})..."
+  local err_file_b="/tmp/gcloud_user_activity_err_$$.log"
+  if ! $cmd_timeout gcloud logging read \
     'logName="projects/'"${PROJECT_ID}"'/logs/discoveryengine.googleapis.com%2Fgemini_enterprise_user_activity"' \
     --project="${PROJECT_ID}" \
-    --freshness=365d \
+    --freshness="${freshness}" \
     --format="json" \
-    --limit=50000 > "${raw_file}"
+    --limit=10000 > "${raw_file}" 2> "${err_file_b}"; then
+      echo "⚠️ Notice: User Activity log read timed out or encountered warnings. Continuing..."
+      cat "${err_file_b}" 2>/dev/null | grep -E "ERROR|Deadline|quota" || true
+  fi
+  rm -f "${err_file_b}"
 
   if [ -s "${raw_file}" ] && [ "$(cat "${raw_file}")" != "[]" ]; then
     cat "${raw_file}" | jq -c '.[]? | {
@@ -345,10 +388,14 @@ stage_backfill_user_activity() {
     local count
     count=$(wc -l < "${output_file}")
     echo "Loading ${count} User Activity records into ${PROJECT_ID}:${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity..."
+    local bq_loc_flag=""
+    if [ -n "$BQ_LOCATION" ]; then bq_loc_flag="--location=${BQ_LOCATION}"; fi
     bq load \
       --project_id="${PROJECT_ID}" \
       --source_format=NEWLINE_DELIMITED_JSON \
+      --ignore_unknown_values \
       --max_bad_records=1000 \
+      ${bq_loc_flag} \
       "${PROJECT_ID}:${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity" \
       "${output_file}"
     echo "✅ Loaded ${count} User Activity records."
@@ -390,10 +437,12 @@ stage_sync_names_and_metrics() {
 # Section 4: Execute Pipeline Stages
 # ------------------------------------------------------------------------------
 TOTAL_START=$(date +%s)
+BACKFILL_WINDOW="${BACKFILL_DAYS:-90d}"
+if [[ "$BACKFILL_WINDOW" =~ ^[0-9]+$ ]]; then BACKFILL_WINDOW="${BACKFILL_WINDOW}d"; fi
 
 run_stage "1/4" "Fetching Live Agent Metadata from Vertex AI API" stage_fetch_api_metadata
-run_stage "2/4" "Backfilling Historical Creators from Cloud Audit Logs (365 Days)" stage_backfill_creators
-run_stage "3/4" "Backfilling Historical User Activity Logs (365 Days)" stage_backfill_user_activity
+run_stage "2/4" "Backfilling Historical Creators from Cloud Audit Logs (${BACKFILL_WINDOW})" stage_backfill_creators
+run_stage "3/4" "Backfilling Historical User Activity Logs (${BACKFILL_WINDOW})" stage_backfill_user_activity
 run_stage "4/4" "Synchronizing Agent Directory & Triggering BigQuery Metrics Export" stage_sync_names_and_metrics
 
 TOTAL_ELAPSED=$(( $(date +%s) - TOTAL_START ))
