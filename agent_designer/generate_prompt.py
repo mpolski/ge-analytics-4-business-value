@@ -34,8 +34,10 @@ def generate_prompt():
     print(f"   • Project ID: {project_id}")
     print(f"   • Dataset ID: {dataset_id}")
 
-    # 2. Read instructions.md template
-    instructions_path = script_dir / "instructions.md"
+    # 2. Read instructions_template.md template
+    instructions_path = script_dir / "instructions_template.md"
+    if not instructions_path.exists():
+        instructions_path = script_dir / "instructions.md"
     if not instructions_path.exists():
         print(f"❌ Error: {instructions_path} not found.")
         sys.exit(1)

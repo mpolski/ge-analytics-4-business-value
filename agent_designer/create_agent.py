@@ -21,9 +21,11 @@ def create_ge_agent():
     print(f"🚀 Preparing to create Agent in Project: {project_id}")
 
     # 2. Read Instructions and Substitute Variables
-    instructions_path = os.path.join(os.path.dirname(__file__), 'instructions.md')
+    instructions_path = os.path.join(os.path.dirname(__file__), 'instructions_template.md')
     if not os.path.exists(instructions_path):
-        print("❌ Error: instructions.md not found.")
+        instructions_path = os.path.join(os.path.dirname(__file__), 'instructions.md')
+    if not os.path.exists(instructions_path):
+        print("❌ Error: instructions_template.md not found.")
         sys.exit(1)
         
     with open(instructions_path, 'r') as f:
@@ -48,15 +50,15 @@ def create_ge_agent():
 
     # 4. Define the Agent Payload
     payload = {
-        "displayName": "GE App Business Value",
-        "description": "Provides reporting on GE App utilization, top agents, features used by users.",
+        "displayName": "Business Value Agent",
+        "description": "Provides executive reporting, adoption trends, feature overlap analysis (Chat vs. NotebookLM vs. Agents), and creator governance across Gemini Enterprise.",
         "state": "ENABLED",
         "sharingConfig": {
             "scope": "ALL_USERS"
         },
         "lowCodeAgentDefinition": {
-            "draftDisplayName": "GE App Business Value",
-            "draftDescription": "Provides reporting on GE App utilization, top agents, features used by users.",
+            "draftDisplayName": "Business Value Agent",
+            "draftDescription": "Provides executive reporting, adoption trends, feature overlap analysis (Chat vs. NotebookLM vs. Agents), and creator governance across Gemini Enterprise.",
             "draftStarterPrompts": [
                 { "text": "What can you help me with?" },
                 { "text": "Show me our top agent creators." },
@@ -67,7 +69,7 @@ def create_ge_agent():
             "nodes": [
                 {
                     "id": "root_agent",
-                    "displayName": "GE App Business Value",
+                    "displayName": "Business Value Agent",
                     "llmAgentNode": {
                         "model": "gemini-3.5-flash",
                         "instruction": instructions_content,
@@ -80,7 +82,7 @@ def create_ge_agent():
             "deployedNodes": [
                 {
                     "id": "root_agent",
-                    "displayName": "GE App Business Value",
+                    "displayName": "Business Value Agent",
                     "llmAgentNode": {
                         "model": "gemini-3.5-flash",
                         "instruction": instructions_content,

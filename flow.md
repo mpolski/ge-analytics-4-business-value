@@ -131,7 +131,7 @@ flowchart TD
     end
 
     subgraph CONSUMER["6. No-Code Analytics Agent (Agent Designer)"]
-        AGENT["🤖 Analytics Agent in Agent Designer<br/>agent_designer/instructions.md"]
+        AGENT["🤖 Analytics Agent in Agent Designer<br/>agent_designer/instructions_template.md"]
     end
 
     %% Case 1 Flows
