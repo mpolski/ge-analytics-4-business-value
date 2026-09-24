@@ -138,16 +138,118 @@ CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googlea
   logName STRING,
   insertId STRING,
   severity STRING,
-  jsonPayload JSON
-);
+  jsonPayload STRUCT<
+    useriamprincipal STRING,
+    servicetextreply STRING,
+    request STRUCT<
+      userquery STRING,
+      agentsspec STRUCT<
+        agentspecs ARRAY<STRUCT<
+          agentid STRING
+        >>
+      >
+    >,
+    response STRUCT<
+      agentinfo STRUCT<
+        agent STRING,
+        displayname STRING
+      >
+    >
+  >
+)
+PARTITION BY DATE(timestamp);
 
 CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_notebooklm_enterprise_user_activity\` (
   timestamp TIMESTAMP,
   logName STRING,
   insertId STRING,
   severity STRING,
-  jsonPayload JSON
-);
+  jsonPayload STRUCT<
+    useriamprincipal STRING,
+    servicetextreply STRING,
+    request STRUCT<
+      userquery STRING,
+      name STRING,
+      parent STRING
+    >,
+    response STRUCT<
+      name STRING,
+      title STRING
+    >
+  >
+)
+PARTITION BY DATE(timestamp);
+
+IF EXISTS (
+  SELECT 1 FROM \`${PROJECT_ID}.${DATASET_ID}.INFORMATION_SCHEMA.COLUMNS\`
+  WHERE table_name = 'discoveryengine_googleapis_com_gemini_enterprise_user_activity'
+    AND column_name = 'jsonPayload' AND data_type = 'JSON'
+) THEN
+  CREATE TEMP TABLE _mig_ge_activity AS
+  SELECT
+    timestamp,
+    logName,
+    insertId,
+    severity,
+    STRUCT(
+      COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.userIamPrincipal'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal')) AS useriamprincipal,
+      COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.serviceTextReply'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.servicetextreply')) AS servicetextreply,
+      STRUCT(
+        COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.userQuery'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.userquery')) AS userquery,
+        STRUCT(
+          [STRUCT(
+            COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsSpec.agentSpecs[0].agentId'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsspec.agentspecs[0].agentid')) AS agentid
+          )] AS agentspecs
+        ) AS agentsspec
+      ) AS request,
+      STRUCT(
+        STRUCT(
+          COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentInfo.agent'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentinfo.agent')) AS agent,
+          COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentInfo.displayName'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentinfo.displayname')) AS displayname
+        ) AS agentinfo
+      ) AS response
+    ) AS jsonPayload
+  FROM \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity\`;
+
+  DROP TABLE \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity\`;
+
+  CREATE TABLE \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity\`
+  PARTITION BY DATE(timestamp) AS
+  SELECT * FROM _mig_ge_activity;
+END IF;
+
+IF EXISTS (
+  SELECT 1 FROM \`${PROJECT_ID}.${DATASET_ID}.INFORMATION_SCHEMA.COLUMNS\`
+  WHERE table_name = 'discoveryengine_googleapis_com_notebooklm_enterprise_user_activity'
+    AND column_name = 'jsonPayload' AND data_type = 'JSON'
+) THEN
+  CREATE TEMP TABLE _mig_nblm_activity AS
+  SELECT
+    timestamp,
+    logName,
+    insertId,
+    severity,
+    STRUCT(
+      COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.userIamPrincipal'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal')) AS useriamprincipal,
+      COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.serviceTextReply'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.servicetextreply')) AS servicetextreply,
+      STRUCT(
+        COALESCE(JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.userQuery'), JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.userquery')) AS userquery,
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.name') AS name,
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.parent') AS parent
+      ) AS request,
+      STRUCT(
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.name') AS name,
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.title') AS title
+      ) AS response
+    ) AS jsonPayload
+  FROM \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_notebooklm_enterprise_user_activity\`;
+
+  DROP TABLE \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_notebooklm_enterprise_user_activity\`;
+
+  CREATE TABLE \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_notebooklm_enterprise_user_activity\`
+  PARTITION BY DATE(timestamp) AS
+  SELECT * FROM _mig_nblm_activity;
+END IF;
 "
 echo "✅ Base tables initialized."
 
@@ -157,9 +259,11 @@ echo "✅ Base tables initialized."
 echo ""
 echo "🚀 [2/3] Setting up Cloud Logging Sinks & Observability..."
 
-echo "Enabling Gemini Notebook Enterprise Observability Audit Logging..."
+echo "Enabling Gemini Notebook Enterprise & Gemini Enterprise Engine Observability Audit Logging..."
 TOKEN=$(gcloud auth print-access-token 2>/dev/null)
+GE_LOC="${GE_LOCATION:-global}"
 if [ -n "${TOKEN}" ]; then
+  # 1. Project-level: Enable NotebookLM Enterprise Observability
   curl -s -X PATCH \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
@@ -175,6 +279,38 @@ if [ -n "${TOKEN}" ]; then
         }
       }
     }' > /dev/null && echo "✅ NotebookLM Enterprise Observability enabled." || echo "ℹ️ Failed to auto-enable NotebookLM observability."
+
+  # 2. Engine-level: Enable Gemini Enterprise App Observability for configured engine(s)
+  TARGET_ENGINES=()
+  if [ -n "${ENGINE_ID}" ] && [ "${ENGINE_ID^^}" != "ALL" ] && [ "${ENGINE_ID^^}" != "AUTO" ] && [ "${ENGINE_ID}" != "*" ]; then
+    IFS=',' read -ra RAW_ENGINES <<< "${ENGINE_ID}"
+    for eng in "${RAW_ENGINES[@]}"; do
+      eng_trimmed="$(echo "${eng}" | xargs)"
+      [ -n "${eng_trimmed}" ] && TARGET_ENGINES+=("${eng_trimmed}")
+    done
+  else
+    ENGINES_JSON=$(curl -s \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "X-Goog-User-Project: ${PROJECT_ID}" \
+      "https://discoveryengine.googleapis.com/v1/projects/${PROJECT_ID}/locations/${GE_LOC}/collections/default_collection/engines" 2>/dev/null || true)
+    while IFS= read -r eng_id; do
+      [ -n "${eng_id}" ] && TARGET_ENGINES+=("${eng_id}")
+    done < <(echo "${ENGINES_JSON}" | grep -oE '"name": *"[^"]+/engines/[^"]+"' | sed -E 's|.*/engines/([^"]+)"|\1|' || true)
+  fi
+
+  for ENG_ID in "${TARGET_ENGINES[@]}"; do
+    curl -s -X PATCH \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -H "X-Goog-User-Project: ${PROJECT_ID}" \
+      "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${GE_LOC}/collections/default_collection/engines/${ENG_ID}?updateMask=observabilityConfig" \
+      -d '{
+        "observabilityConfig": {
+          "observabilityEnabled": true,
+          "sensitiveLoggingEnabled": true
+        }
+      }' > /dev/null && echo "✅ Gemini Enterprise Observability enabled for engine: ${ENG_ID}" || echo "ℹ️ Failed to auto-enable observability for engine: ${ENG_ID}"
+  done
 fi
 
 # Sink 1: Agent Creation Events
@@ -335,41 +471,46 @@ WITH normalized_logs AS (
   UNION ALL
 
   SELECT
-    JSON_VALUE(jsonPayload, '$.userIamPrincipal') AS user_email,
+    COALESCE(
+      JSON_VALUE(jp_str, '$.userIamPrincipal'),
+      JSON_VALUE(jp_str, '$.useriamprincipal')
+    ) AS user_email,
     DATE(timestamp) AS activity_date,
-    (JSON_VALUE(jsonPayload, '$.request.agentsSpec') IS NULL 
-     AND JSON_VALUE(jsonPayload, '$.response.agentInfo.agent') IS NULL) AS is_chat,
-
-    ((JSON_VALUE(jsonPayload, '$.request.agentsSpec') IS NOT NULL 
-      OR JSON_VALUE(jsonPayload, '$.response.agentInfo.agent') IS NOT NULL)
-     AND COALESCE(
-           JSON_VALUE(jsonPayload, '$.response.agentInfo.agent'),
-           JSON_VALUE(jsonPayload, '$.request.agentsSpec.agentSpecs[0].agentId')
-         ) NOT IN ('workflow_summary_agent', 'default_assistant')) AS is_agent,
-
+    (raw_agent_id IS NULL) AS is_chat,
+    (raw_agent_id IS NOT NULL
+     AND REGEXP_EXTRACT(raw_agent_id, r'([^/]+)$') NOT IN ('workflow_summary_agent', 'default_assistant')) AS is_agent,
     (logName LIKE '%notebooklm%') AS is_nblm,
-
     IF(
-      COALESCE(
-        JSON_VALUE(jsonPayload, '$.response.agentInfo.agent'),
-        JSON_VALUE(jsonPayload, '$.request.agentsSpec.agentSpecs[0].agentId')
-      ) IN ('workflow_summary_agent', 'default_assistant'),
+      REGEXP_EXTRACT(raw_agent_id, r'([^/]+)$') IN ('workflow_summary_agent', 'default_assistant'),
       NULL,
-      COALESCE(
-        JSON_VALUE(jsonPayload, '$.response.agentInfo.agent'),
-        JSON_VALUE(jsonPayload, '$.request.agentsSpec.agentSpecs[0].agentId')
-      )
+      REGEXP_EXTRACT(raw_agent_id, r'([^/]+)$')
     ) AS agent_id
-  FROM \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity\`
-  WHERE JSON_VALUE(jsonPayload, '$.userIamPrincipal') IS NOT NULL
+  FROM (
+    SELECT
+      timestamp,
+      logName,
+      TO_JSON_STRING(jsonPayload) AS jp_str,
+      COALESCE(
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsSpec.agentSpecs[0].agentId'),
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsspec.agentspecs[0].agentid'),
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentInfo.agent'),
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentinfo.agent'),
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.userEvent.agentspaceInfo.agentInfo.agentId'),
+        JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.userevent.agentspaceinfo.agentinfo.agentid')
+      ) AS raw_agent_id
+    FROM \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity\`
+  )
+  WHERE COALESCE(
+    JSON_VALUE(jp_str, '$.userIamPrincipal'),
+    JSON_VALUE(jp_str, '$.useriamprincipal')
+  ) IS NOT NULL
 
   UNION ALL
 
   SELECT
     COALESCE(
       JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.userIamPrincipal'),
-      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal'),
-      SAFE.STRING(jsonPayload.useriamprincipal)
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal')
     ) AS user_email,
     DATE(timestamp) AS activity_date,
     FALSE AS is_chat,
@@ -379,8 +520,7 @@ WITH normalized_logs AS (
   FROM \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_notebooklm_enterprise_user_activity\`
   WHERE COALESCE(
     JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.userIamPrincipal'),
-    JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal'),
-    SAFE.STRING(jsonPayload.useriamprincipal)
+    JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.useriamprincipal')
   ) IS NOT NULL
 )
 SELECT

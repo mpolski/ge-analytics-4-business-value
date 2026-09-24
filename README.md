@@ -148,24 +148,24 @@ chmod +x infra_setup/setup_infra.sh
 ```
 
 #### What `setup_infra.sh` Automates Under the Hood:
-1. **Enables NotebookLM Enterprise Real-Time Usage Audit Logs:**
-   Executes the required Discovery Engine project-level PATCH to activate observability:
+1. **Enables NotebookLM Enterprise & Gemini Enterprise App Observability Audit Logs:**
+   Executes the Discovery Engine project-level `PATCH` (for NotebookLM Enterprise) and engine-level `PATCH` (for all configured Gemini Enterprise Engines) to activate real-time user activity telemetry (`notebooklm_enterprise_user_activity` and `gemini_enterprise_user_activity`):
    ```bash
+   # 1. Project-level: Enable NotebookLM Enterprise Observability
    curl -X PATCH \
      -H "Authorization: Bearer $(gcloud auth print-access-token)" \
      -H "Content-Type: application/json" \
      -H "x-goog-user-project: $PROJECT_ID" \
      "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}?updateMask=customerProvidedConfig.notebooklmConfig.observabilityConfig" \
-     -d '{
-       "customerProvidedConfig": {
-         "notebooklmConfig": {
-           "observabilityConfig": {
-             "observabilityEnabled": true,
-             "sensitiveLoggingEnabled": true
-           }
-         }
-       }
-     }'
+     -d '{"customerProvidedConfig": {"notebooklmConfig": {"observabilityConfig": {"observabilityEnabled": true, "sensitiveLoggingEnabled": true}}}}'
+
+   # 2. Engine-level: Enable Gemini Enterprise App Observability
+   curl -X PATCH \
+     -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+     -H "Content-Type: application/json" \
+     -H "x-goog-user-project: $PROJECT_ID" \
+     "https://discoveryengine.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${GE_LOCATION}/collections/default_collection/engines/${ENGINE_ID}?updateMask=observabilityConfig" \
+     -d '{"observabilityConfig": {"observabilityEnabled": true, "sensitiveLoggingEnabled": true}}'
    ```
    *(For details, see the official [Google Cloud NotebookLM Enterprise Usage Audit Logs Documentation](https://docs.cloud.google.com/gemini/enterprise/notebooklm-enterprise/docs/set-up-usage-audit-logs-for-nblme)).*
 

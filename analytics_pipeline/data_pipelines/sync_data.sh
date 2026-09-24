@@ -115,13 +115,28 @@ bq query --use_legacy_sql=false "
 MERGE INTO \`${PROJECT_ID}.${DATASET_ID}.agent_names\` T
 USING (
   SELECT DISTINCT
-    JSON_VALUE(jsonPayload, '$.request.agentsSpec.agentSpecs[0].agentId') AS agent_id,
-    JSON_VALUE(jsonPayload, '$.response.agentInfo.displayName') AS display_name,
+    COALESCE(
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsSpec.agentSpecs[0].agentId'),
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsspec.agentspecs[0].agentid')
+    ) AS agent_id,
+    COALESCE(
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentInfo.displayName'),
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentinfo.displayname')
+    ) AS display_name,
     'Agent Designer' AS agent_type
   FROM \`${PROJECT_ID}.${DATASET_ID}.discoveryengine_googleapis_com_gemini_enterprise_user_activity\`
-  WHERE JSON_VALUE(jsonPayload, '$.response.agentInfo.displayName') IS NOT NULL
-    AND JSON_VALUE(jsonPayload, '$.request.agentsSpec.agentSpecs[0].agentId') IS NOT NULL
-    AND JSON_VALUE(jsonPayload, '$.request.agentsSpec.agentSpecs[0].agentId') NOT IN ('workflow_summary_agent', 'default_assistant')
+  WHERE COALESCE(
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentInfo.displayName'),
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.response.agentinfo.displayname')
+    ) IS NOT NULL
+    AND COALESCE(
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsSpec.agentSpecs[0].agentId'),
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsspec.agentspecs[0].agentid')
+    ) IS NOT NULL
+    AND COALESCE(
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsSpec.agentSpecs[0].agentId'),
+      JSON_VALUE(TO_JSON_STRING(jsonPayload), '$.request.agentsspec.agentspecs[0].agentid')
+    ) NOT IN ('workflow_summary_agent', 'default_assistant')
 ) S
 ON T.agent_id = S.agent_id
 WHEN MATCHED AND (T.display_name IS NULL OR T.display_name = '' OR T.display_name = 'My Agent' OR T.display_name = 'Unknown Name') THEN
