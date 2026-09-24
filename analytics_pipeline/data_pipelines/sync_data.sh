@@ -1,17 +1,55 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: sync_data.sh
-# Description:
-#   Periodic / Nightly sync script for Gemini Enterprise Analytics.
-#   Performs:
-#     1. Live agent metadata sync from Vertex AI API (fetch_agent_names.py)
-#     2. Display name synchronization from real-time BigQuery audit logs
-#     3. Discovery Engine session metrics export to BigQuery (metrics_to_bq.py)
+# Directory:   analytics_pipeline/data_pipelines/
 #
-# Requirements:
-#   - Python 3 with dependencies installed.
-#   - gcloud and bq CLI authenticated.
-#   - .env file in analytics_pipeline/ with PROJECT_ID, ENGINE_ID, and DATASET_ID.
+# Overview:
+#   Lightweight, fast incremental data synchronization script for Gemini
+#   Enterprise (GE) Analytics. Refreshes live agent metadata, reconciles
+#   display names, and triggers session metrics exports without re-scanning
+#   historical Cloud Logging buckets.
+#
+# When to Use:
+#   - Run on-demand whenever new agents, connectors, or data stores are added
+#     and you want BigQuery tables updated immediately (without waiting for the
+#     nightly `ge-analytics-nightly-sync` Cloud Function).
+#   - Run after upgrading repository code or adding new metadata columns (e.g.,
+#     `connector_types`, `datastore_names`) to refresh `<DATASET_ID>.agent_names`
+#     in ~20 seconds.
+#   - Do NOT need to run `initial_data_sync.sh` if real-time Cloud Logging sinks
+#     are already active; use this script instead.
+#
+# What This Script Does (3 Sequential Steps):
+#   1. [Step 1/3] Fetch Live Agent Metadata (`fetch_agent_names.py`):
+#      - Queries the Discovery Engine API across all configured engines (`ENGINE_ID`).
+#      - Automatically migrates `<DATASET_ID>.agent_names` schema if new columns
+#        were introduced, and refreshes all agent configurations, system prompts,
+#        connected tools (`connector_ids`, `connector_types`), and data stores.
+#
+#   2. [Step 2/3] Reconcile Display Names from BigQuery Activity Logs:
+#      - Executes a SQL `MERGE` from `<DATASET_ID>.discoveryengine_googleapis_com_gemini_enterprise_user_activity`
+#        into `<DATASET_ID>.agent_names` to backfill human-readable names for any
+#        deleted or runtime-only agents seen in chat telemetry.
+#
+#   3. [Step 3/3] Export Discovery Engine Session Metrics (`metrics_to_bq.py`):
+#      - Invokes the Discovery Engine `analytics:exportMetrics` REST API for each
+#        configured engine to export daily session counts and Monthly Active Users
+#        (MAU) into `<DATASET_ID>.agent_session_metrics`.
+#
+# Environment Variables (loaded from `analytics_pipeline/.env`):
+#   - PROJECT_ID     (Required) : Target Google Cloud Project ID.
+#   - ENGINE_ID      (Required) : Comma-separated engine IDs or "ALL".
+#   - DATASET_ID     (Required) : Target BigQuery Dataset name (e.g., `ge_metrics`).
+#   - GE_LOCATION    (Optional) : Discovery Engine API region (`global`, `us`, `eu`).
+#   - BQ_LOCATION    (Optional) : BigQuery Dataset multi-region (`US` or `EU`).
+#
+# Prerequisites:
+#   - `gcloud` SDK and `bq` CLI installed and authenticated.
+#   - Python 3 environment with required packages (`requests`, `google-auth`, `python-dotenv`).
+#
+# Usage:
+#   cd analytics_pipeline
+#   ./data_pipelines/sync_data.sh
 # ==============================================================================
 
 set -e

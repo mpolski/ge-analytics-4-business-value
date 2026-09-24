@@ -1,3 +1,12 @@
+"""
+Script Name: metrics_to_bq.py
+Description:
+  Triggers the Discovery Engine `analytics:exportMetrics` API across configured
+  Gemini Enterprise engines (`ENGINE_ID` or `ALL`) to export daily agent session
+  counts and Monthly Active User (MAU) aggregates into BigQuery table
+  `<PROJECT_ID>.<DATASET_ID>.agent_session_metrics`.
+"""
+
 import os
 import sys
 import json

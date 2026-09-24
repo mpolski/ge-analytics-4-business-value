@@ -1,3 +1,13 @@
+"""
+Script Name: fetch_agent_names.py
+Description:
+  Queries the Discovery Engine REST API across configured Gemini Enterprise engines
+  to extract custom agent metadata (display names, architecture types, descriptions,
+  system instructions, connected tools/connectors, data stores, and sub-agents).
+  Automatically ensures BigQuery schema compatibility and loads the directory into
+  `<PROJECT_ID>.<DATASET_ID>.agent_names`.
+"""
+
 import os
 import sys
 import time

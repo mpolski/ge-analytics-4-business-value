@@ -1,19 +1,63 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: initial_data_sync.sh
-# Description:
-#   One-stop initial data ingestion & backfill pipeline for Gemini Enterprise Analytics.
-#   Executes all 4 stages in sequence with live progress animations:
-#     Stage 1: Fetch Live Agent Metadata from API (fetch_agent_names.py)
-#     Stage 2: Backfill Historical Creators from Cloud Audit Logs
-#     Stage 3: Backfill Historical User Activity from Cloud Logging
-#     Stage 4: Synchronize Agent Directory & Export Session Metrics (metrics_to_bq.py)
+# Directory:   analytics_pipeline/data_pipelines/
 #
-# Requirements:
-#   - jq utility installed.
-#   - gcloud SDK and bq CLI authenticated.
-#   - Python 3 with requirements installed.
-#   - .env file with PROJECT_ID, ENGINE_ID, and DATASET_ID.
+# Overview:
+#   End-to-end initial data ingestion and historical backfill pipeline for
+#   Gemini Enterprise (GE) & NotebookLM Enterprise Analytics.
+#
+# When to Use:
+#   - Run ONCE during initial (greenfield) setup immediately after running
+#     `./infra_setup/setup_infra.sh` to populate historical audit logs and
+#     establish baseline directory & session metrics before real-time sinks take over.
+#   - For subsequent incremental updates or schema upgrades (where historical
+#     audit logs are already in BigQuery), use `./data_pipelines/sync_data.sh` instead.
+#
+# What This Script Does (4 Sequential Stages):
+#   1. [Stage 1/4] Live Agent Metadata Extraction (`fetch_agent_names.py`):
+#      - Queries the Discovery Engine API across all configured engines (`ENGINE_ID`).
+#      - Extracts agent display names, architecture types (`ADK Agent`, `Agent Builder`,
+#        `Workflow Agent`, `Skill`), system instructions, data stores, and connectors.
+#      - Populates/updates the `<DATASET_ID>.agent_names` table in BigQuery.
+#
+#   2. [Stage 2/4] Historical Creator Attribution Backfill:
+#      - Queries Cloud Audit Logs (`cloudaudit.googleapis.com/activity`) for past
+#        `CreateAgent` and `CreateEngine` events over `BACKFILL_DAYS` (default: 90d).
+#      - Extracts the creator's email (`principalEmail`), creation timestamp, and
+#        agent/engine IDs to attribute agents built prior to sink installation.
+#      - Populates the `<DATASET_ID>.historical_creators` table in BigQuery.
+#
+#   3. [Stage 3/4] Historical User Activity Backfill:
+#      - Part A: Backfills historical Data Access logs (`cloudaudit.googleapis.com/data_access`)
+#        into `<DATASET_ID>.cloudaudit_googleapis_com_data_access` (captures NotebookLM
+#        Enterprise and administrative activity prior to sink setup).
+#      - Part B: Backfills Gemini Enterprise user interaction logs
+#        (`discoveryengine.googleapis.com/gemini_enterprise_user_activity`) into
+#        `<DATASET_ID>.discoveryengine_googleapis_com_gemini_enterprise_user_activity`.
+#
+#   4. [Stage 4/4] Agent Directory Reconciliation & Session Metrics Export:
+#      - Reconciles any missing agent display names discovered exclusively in user
+#        activity logs via a BigQuery `MERGE` into `<DATASET_ID>.agent_names`.
+#      - Triggers the Discovery Engine `analytics:exportMetrics` API (`metrics_to_bq.py`)
+#        to export aggregated session counts and MAU metrics into
+#        `<DATASET_ID>.agent_session_metrics`.
+#
+# Environment Variables (loaded from `analytics_pipeline/.env`):
+#   - PROJECT_ID     (Required) : Target Google Cloud Project ID.
+#   - ENGINE_ID      (Required) : Comma-separated engine IDs or "ALL".
+#   - DATASET_ID     (Required) : Target BigQuery Dataset name (e.g., `ge_metrics`).
+#   - GE_LOCATION    (Optional) : Discovery Engine API region (`global`, `us`, `eu`).
+#   - BQ_LOCATION    (Optional) : BigQuery Dataset multi-region (`US` or `EU`).
+#   - BACKFILL_DAYS  (Optional) : How far back to scan Cloud Logging (default: `90d`).
+#
+# Prerequisites:
+#   - `jq`, `gcloud` SDK, and `bq` CLI installed and authenticated.
+#   - Python 3 environment with required packages (`requests`, `google-auth`, `python-dotenv`).
+#
+# Usage:
+#   cd analytics_pipeline
+#   ./data_pipelines/initial_data_sync.sh
 # ==============================================================================
 
 set -e

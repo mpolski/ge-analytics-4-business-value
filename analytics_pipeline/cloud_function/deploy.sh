@@ -2,11 +2,18 @@
 # ==============================================================================
 # Script Name: deploy.sh
 # Description:
-#   Deploys the lightweight serverless Cloud Function for Gemini Enterprise Analytics
-#   and schedules it to run nightly at midnight via Cloud Scheduler.
+#   Deploys the lightweight serverless Cloud Function (`ge-analytics-nightly-sync`)
+#   and schedules it to run nightly at 00:00 UTC via Cloud Scheduler.
+#
+# Why It Is Needed:
+#   While Cloud Logging sinks stream user activity and creator events in real time,
+#   Discovery Engine does NOT automatically stream live agent configurations
+#   (prompts, connectors, data stores) or periodic session/MAU aggregates.
+#   This nightly job automatically polls the Discovery Engine APIs to keep
+#   `<DATASET_ID>.agent_names` and `<DATASET_ID>.agent_session_metrics` up to date.
 #
 # Usage:
-#   ./deploy.sh
+#   ./cloud_function/deploy.sh
 # ==============================================================================
 
 set -e
